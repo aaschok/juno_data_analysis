@@ -10,6 +10,7 @@ import matplotlib.dates as mdates
 import matplotlib.gridspec as gs
 import matplotlib.pyplot as plt
 import numpy as np
+import spiceypy as spice
 import pandas as pd
 import pycwt as wavelet
 import scipy.integrate as integrate
@@ -20,7 +21,7 @@ from mpl_toolkits.axes_grid1 import make_axes_locatable
 from spiceypy.spiceypy import xf2eul
 from sklearn.linear_model import LinearRegression
 
-from juno_functions import _get_files, time_in_lat_window
+from juno_functions import _get_files, time_in_lat_window, get_sheath_intervals
 
 
 class PlotClass:
@@ -78,6 +79,43 @@ class PlotClass:
             cbr = plt.colorbar(cwt, cax=cax)
             cbr.set_label('Magnitude', rotation=270, labelpad=5, size=8)
 
+class PosData():
+    def __init__(self, datetime_series):
+        self.datetime_series = datetime_series
+        
+    def JSS_Pos_data(self):
+        pass
+    
+    def sys_3(self):
+        for year in ['2016', '2017', '2018', '2019', '2020']:
+                spice.furnsh(f'/data/juno_spacecraft/data/meta_kernels/juno_{year}.tm')
+            
+        et_array = [spice.utc2et(i) for i in self.datetime_series.strftime('%Y-%m-%dT%H:%M:%S')]
+        positions, lt = spice.spkpos('JUNO', et_array,
+                                    'IAU_JUPITER', 'NONE', 'JUPITER')
+        rad = np.array([])
+        lat = np.array([])
+        lon = np.array([])
+        for vector in positions:
+            r, la, lo = spice.recsph(vector)
+            rad = np.append(rad, r)
+            lat = np.append(lat, la*180/np.pi)
+            lon = np.append(lon, lo*180/np.pi)
+
+        x = np.array(positions.T[0])
+        y = np.array(positions.T[1])
+        z = np.array(positions.T[2])
+        spice.kclear()
+
+        deg2rad = np.pi/180
+        a = 1.66*deg2rad
+        b = 0.131
+        R = np.sqrt(x**2 + y**2 + z**2)/7.14e4
+        c = 1.62
+        d = 7.76*deg2rad
+        e = 249*deg2rad
+        CentEq2 = (a*np.tanh(b*R - c) + d)*np.sin(lon*deg2rad - e)
+        z_equator = positions.T[2]/7.14e4 - R*np.sin(CentEq2)
 
 class MagData:
     """Collects and stores all mag data between two datetimes.
@@ -358,6 +396,17 @@ class CWTData:
                                   key=lambda i: abs(self.freqs[i] - self.coi[col_num]))
             self.power[:coi_start_index, col_num] = np.zeros(coi_start_index)        
 
+    def remove_sheath(self):
+        #   Removes all instinces of data inside the sheath
+        sheath_windows_df = get_sheath_intervals('/data/juno_spacecraft/data/crossings/crossingmasterlist/jno_crossings_master_v3.dat')
+        sheath_window = False
+        for index, row in sheath_windows_df.iterrows():
+            if (self.time_series.min() < row.START < self.time_series.max()) or\
+                (self.time_series.min() < row.END < self.time_series.max()):
+                    mask = (self.time_series < row.START) | (self.time_series > row.END)
+                    self.time_series = self.time_series[mask]
+                    self.power = self.power[:, mask]
+        
     def _peak_finding(self):
 
         mean_power = 2 * np.mean(self.power)

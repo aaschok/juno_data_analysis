@@ -50,46 +50,56 @@ class CrossingClass():
     def getJade(self,jade_folder):
         
         DOY,ISO,datFiles = getFiles(self.date_range[0].isoformat(),self.date_range[1].isoformat(),'.DAT',jade_folder,'JAD_L30_LRS_ION_ANY_CNT') 
-        jadeIon = JadeData(datFiles,self.date_range[0].isoformat(),self.date_range[1].isoformat())
-        jadeIon.getIonData()
-        
-        temp = []
-        jade_data = []
-        jade_time = []
-        jade_dim1 = []
-        for date in jadeIon.dataDict.keys():
-            temp = np.append(temp,jadeIon.dataDict[date]['DATETIME_ARRAY'])
-            jade_data = np.append(jade_data,jadeIon.dataDict[date]['DATA_ARRAY'])
-            jade_dim1 = jadeIon.dataDict[date]['DIM1_ARRAY']
-        jade_time_list = [datetime.datetime.fromisoformat(i) for i in temp]
-        crossing_index_begin = int(jade_time_list.index(min(jade_time_list,key=lambda x: abs(x-(self.date_range[0])))))
-        crossing_index_end = int(jade_time_list.index(min(jade_time_list,key=lambda x: abs(x-(self.date_range[1])))))
-        matrix = np.transpose(np.reshape(jade_data,(int(len(jade_data)/64),64)))
-        self.jade_data = np.flip(matrix[:,crossing_index_begin:crossing_index_end+1],axis=0)
-        self.jade_time = temp[crossing_index_begin:crossing_index_end+1]
-        self.jade_dim1 = jade_dim1
+        if len(datFiles) == 0:
+            self.jade_data = np.array([])
+            self.jade_time = np.array([])
+            self.jade_dim1 = np.array([])
+           
+        else:    
+            jadeIon = JadeData(datFiles,self.date_range[0].isoformat(),self.date_range[1].isoformat())
+            jadeIon.getIonData()
+            
+            temp = []
+            jade_data = []
+            jade_time = []
+            jade_dim1 = []
+            for date in jadeIon.dataDict.keys():
+                temp = np.append(temp,jadeIon.dataDict[date]['DATETIME_ARRAY'])
+                jade_data = np.append(jade_data,jadeIon.dataDict[date]['DATA_ARRAY'])
+                jade_dim1 = jadeIon.dataDict[date]['DIM1_ARRAY']
+            jade_time_list = [datetime.datetime.fromisoformat(i) for i in temp]
+            crossing_index_begin = int(jade_time_list.index(min(jade_time_list,key=lambda x: abs(x-(self.date_range[0])))))
+            crossing_index_end = int(jade_time_list.index(min(jade_time_list,key=lambda x: abs(x-(self.date_range[1])))))
+            matrix = np.transpose(np.reshape(jade_data,(int(len(jade_data)/64),64)))
+            self.jade_data = np.flip(matrix[:,crossing_index_begin:crossing_index_end+1],axis=0)
+            self.jade_time = temp[crossing_index_begin:crossing_index_end+1]
+            self.jade_dim1 = jade_dim1
         
         print(f'Ion data pulled {self.crossing_time}')
-        
         DOY,ISO,datFiles = getFiles(self.date_range[0].isoformat(),self.date_range[1].isoformat(),'.DAT',jade_folder,'JAD_L30_LRS_ELC_ANY_CNT') 
-        jadeElec = JadeData(datFiles,self.date_range[0].isoformat(),self.date_range[1].isoformat())
-        jadeElec.getElecData()
-        
-        temp = []
-        jade_elec_data = []
-        jade_elec_time = []
-        jade_elec_dim1 = []
-        for date in jadeElec.dataDict.keys():
-            temp = np.append(temp,jadeElec.dataDict[date]['DATETIME_ARRAY'])
-            jade_elec_data = np.append(jade_elec_data,jadeElec.dataDict[date]['DATA_ARRAY'])
-            jade_elec_dim1 = jadeElec.dataDict[date]['DIM1_ARRAY']
-        jade_elec_time_list = [datetime.datetime.fromisoformat(i) for i in temp]
-        crossing_index_begin = int(jade_elec_time_list.index(min(jade_elec_time_list,key=lambda x: abs(x-(self.date_range[0])))))
-        crossing_index_end = int(jade_elec_time_list.index(min(jade_elec_time_list,key=lambda x: abs(x-(self.date_range[1])))))
-        matrix = np.transpose(np.reshape(jade_elec_data,(int(len(jade_elec_data)/64),64)))
-        self.jade_elec_data = matrix[:,crossing_index_begin:crossing_index_end+1]
-        self.jade_elec_time = temp[crossing_index_begin:crossing_index_end+1]
-        self.jade_elec_dim1 = jade_elec_dim1
+        if len(datFiles) == 0:
+            self. jade_elec_data = np.array([])
+            self.jade_elec_time = np.array([])
+            self.jade_elec_dim1 = np.array([])
+        else:    
+            jadeElec = JadeData(datFiles,self.date_range[0].isoformat(),self.date_range[1].isoformat())
+            jadeElec.getElecData()
+            
+            temp = []
+            jade_elec_data = []
+            jade_elec_time = []
+            jade_elec_dim1 = []
+            for date in jadeElec.dataDict.keys():
+                temp = np.append(temp,jadeElec.dataDict[date]['DATETIME_ARRAY'])
+                jade_elec_data = np.append(jade_elec_data,jadeElec.dataDict[date]['DATA_ARRAY'])
+                jade_elec_dim1 = jadeElec.dataDict[date]['DIM1_ARRAY']
+            jade_elec_time_list = [datetime.datetime.fromisoformat(i) for i in temp]
+            crossing_index_begin = int(jade_elec_time_list.index(min(jade_elec_time_list,key=lambda x: abs(x-(self.date_range[0])))))
+            crossing_index_end = int(jade_elec_time_list.index(min(jade_elec_time_list,key=lambda x: abs(x-(self.date_range[1])))))
+            matrix = np.transpose(np.reshape(jade_elec_data,(int(len(jade_elec_data)/64),64)))
+            self.jade_elec_data = matrix[:,crossing_index_begin:crossing_index_end+1]
+            self.jade_elec_time = temp[crossing_index_begin:crossing_index_end+1]
+            self.jade_elec_dim1 = jade_elec_dim1
         
         
     def getPosition(self,meta_kernel):
@@ -162,12 +172,12 @@ class CrossingClass():
         print(f'Created CDF for {self.type} crossing {self.crossing_time.strftime("%Y-%m-%dT%H:%M:%S")}\n')                     
                         
 def textract():
-    crossing_file = r'/data/juno_spacecraft/data/crossings/crossingmasterlist/jno_crossings_master_fixed.dat'
+    crossing_file = r'/data/juno_spacecraft/data/crossings/crossingmasterlist/jno_crossings_master_v6.txt'
     fgm_folder = r"/data/juno_spacecraft/data/fgm"
     jade_folder = r"/data/juno_spacecraft/data/jad"
-    save_loc = r'/home/aschok/Documents/cdf'
+    save_loc = r'/home/aschok/Documents/cdf/crossings_v6_CDFs'
     
-    crossing_list = pd.read_csv(crossing_file)
+    crossing_list = pd.read_csv(crossing_file, skiprows=[1])
     
     for index, row in crossing_list.iterrows():
         crossing = f'{row["DATE"]}T{row["TIME"]}'
@@ -183,17 +193,49 @@ def textract():
         crossings.packageCDF(save_loc)            
 
 def single_extract():
-    time = '2017-02-11T03:00:00'
+    crossings = ['2017-05-06T20:30:24', '2017-06-02T15:08:00', 
+                 '2017-06-16T22:15:00', '2017-06-28T21:42:18.500000',
+                 '2017-10-02T23:16:11.500000']
+    cross_type = ['Long']
+    
     fgm_folder = r"/data/juno_spacecraft/data/fgm"
     jade_folder = r"/data/juno_spacecraft/data/jad"
     save_loc = r'/home/aschok/Documents'
     meta_kernel = (f'/data/juno_spacecraft/data/meta_kernels/juno_2017.tm')
-    crossings = CrossingClass(time, 'Sheath', 3)
-    crossings.getMag(fgm_folder)
-    try: crossings.getJade(jade_folder)
-    except ValueError: pass
-    crossings.getPosition(meta_kernel)       
-    crossings.packageCDF(save_loc)
+    for i, time in enumerate(crossings):
+        crossings = CrossingClass(time, cross_type[i], 2)
+        crossings.getMag(fgm_folder)
+        try: crossings.getJade(jade_folder)
+        except ValueError: pass
+        crossings.getPosition(meta_kernel)       
+        crossings.packageCDF(save_loc)
+
+def custom_intervals():
+    intervals_df=pd.DataFrame({'Start': ['2017-05-06T17:15:39',
+                                         '2017-06-02T13:39:00',
+                                         '2017-06-16T06:00:00',
+                                         '2017-06-28T10:40:34',
+                                         '2017-10-02T12:38:17'],
+                               'End': ['2017-05-07T00:45:09',
+                                       '2017-06-02T16:37:00',
+                                       '2017-06-17T14:30:00',
+                                       '2017-06-29T08:44:03',
+                                       '2017-10-03T09:54:06']})
+    fgm_folder = r"/data/juno_spacecraft/data/fgm"
+    jade_folder = r"/data/juno_spacecraft/data/jad"
+    save_loc = r'/home/aschok/Documents/cdf/crossings_v6_CDFs/longwindows'
+    meta_kernel = (f'/data/juno_spacecraft/data/meta_kernels/juno_2017.tm')
+    for index, row in intervals_df.iterrows():
+        start = datetime.datetime.fromisoformat(row.Start)
+        end = datetime.datetime.fromisoformat(row.End)
+        cross_time = (start + (end - start)/2).isoformat()
+        cross_width = ((end-start)/2).total_seconds()/3600
+        crossings = CrossingClass(cross_time, 'long', cross_width)
+        crossings.getMag(fgm_folder)
+        try: crossings.getJade(jade_folder)
+        except ValueError: pass
+        crossings.getPosition(meta_kernel)       
+        crossings.packageCDF(save_loc)
 
 def test():
     
@@ -287,8 +329,8 @@ def dataToPickle():
 #----------------------------------------------------------------------------------------------------------------------------------------------------------
 
 if __name__ == '__main__':
-    single_extract()
-    test()
+    custom_intervals()
+    
     
     
     

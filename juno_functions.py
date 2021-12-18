@@ -6,7 +6,7 @@ import pandas as pd
 import spiceypy as spice
 
 
-def time_in_lat_window(start_time, end_time, target_latitude=10):
+def time_in_lat_window(start_time, end_time, max_lat=10, min_lat=-10):
     """
 
     Parameters
@@ -47,7 +47,7 @@ def time_in_lat_window(start_time, end_time, target_latitude=10):
     radii, longitude, latitude = spice.reclat(vector_pos)
     lat_ini = latitude*spice.dpr()
     time_stamp_ini = time_list[0]
-    if -target_latitude <= lat_ini <= target_latitude:
+    if min_lat <= lat_ini <= max_lat:
         enter_time = time_stamp_ini
         enter_lat = lat_ini
         entered = True
@@ -62,17 +62,17 @@ def time_in_lat_window(start_time, end_time, target_latitude=10):
         vector_pos = spice.vpack(position[0], position[1], position[2])
         radii, longitude, latitude = spice.reclat(vector_pos)
         lat = latitude*spice.dpr()
-        if -target_latitude <= lat <= target_latitude:
+        if min_lat <= lat <= max_lat:
             if np.abs(lat - lat_ini) > 1:
                 pass
-            elif lat_ini < -target_latitude or lat_ini > target_latitude:
+            elif lat_ini < min_lat or lat_ini > max_lat:
                 enter_time = time_stamp
                 enter_lat = lat
                 entered = True
-        if -target_latitude <= lat_ini <= target_latitude:
+        if min_lat <= lat_ini <= max_lat:
             if np.abs(lat - lat_ini) > 1:
                 pass
-            elif lat < -target_latitude or lat > target_latitude or i + 2 == len(time_list):
+            elif lat < min_lat or lat > max_lat or i + 2 == len(time_list):
                 exit_time = time_stamp_ini
                 exit_lat = lat_ini
                 exited = True
@@ -87,6 +87,26 @@ def time_in_lat_window(start_time, end_time, target_latitude=10):
     spice.kclear()
     return lat_windows_df
 
+def get_sheath_intervals(crossing_file):
+    crossings_df = pd.read_csv(crossing_file)
+    crossings_df = crossings_df.drop('NOTES', axis=1)
+
+    in_sheath = False
+    sheath_windows_df = pd.DataFrame({'START': [], 'END': []}) 
+    for index, row in crossings_df.iterrows():
+        if row.BOUNDARYID.lower() == 'sheath':
+            if not in_sheath:
+                start = datetime.fromisoformat(f'{row.DATE}T{row.TIME}')
+                in_sheath = True
+            
+        if row.BOUNDARYID.lower() == 'magnetosphere':
+            if in_sheath:
+                end = datetime.fromisoformat(f'{row.DATE}T{row.TIME}')
+                in_sheath = False
+                sheath_windows_df = sheath_windows_df.append({'START':start,
+                                                            'END': end},
+                                                            ignore_index=True)
+    return sheath_windows_df
 
 def _get_files(start_time, end_time, file_type, data_folder, *args):
     """Find all files between two dates.
@@ -135,3 +155,16 @@ def _get_files(start_time, end_time, file_type, data_folder, *args):
     file_dates, file_paths = zip(*sorting_array)
     del(datetime_array, file_dates)
     return file_paths
+
+def find_orb_num(date_time):
+    if type(date_time) is str:
+        date_time = datetime.fromisoformat(date_time)
+        
+    orbs = pd.read_fwf('/data/juno_spacecraft/data/orbits/juno_rec_orbit_v08.orb')
+    orbs = orbs.drop(index=[0])
+    for index in orbs.index[:-1]:
+        orb_start = datetime.strptime(orbs['Event UTC APO'][index], '%Y %b %d %H:%M:%S')
+        orb_end = datetime.strptime(orbs['Event UTC APO'][index + 1], '%Y %b %d %H:%M:%S')
+        if (date_time > orb_start) & (date_time < orb_end):
+            return orbs['No.'][index]
+        

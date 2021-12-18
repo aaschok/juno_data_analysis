@@ -19,11 +19,11 @@ from matplotlib.colors import LogNorm
 from scipy import integrate, signal
 
 from juno_classes import CWTData, MagData, PlotClass, Turbulence
-from juno_functions import time_in_lat_window
+from juno_functions import time_in_lat_window, get_sheath_intervals
 
 
 def _plots(start_datetime, end_datetime, window_size, days_per_graph, major, minor,
-                 min_frequency, max_frequency, freq_per_bin, save_location):
+                 min_frequency, max_frequency, save_location):
         
         print(start_datetime)
         print(end_datetime)
@@ -31,6 +31,7 @@ def _plots(start_datetime, end_datetime, window_size, days_per_graph, major, min
         mag_class.downsample_data(60)
         mag_class.mean_field_align(window_size=window_size)
         mag_data = mag_class.data_df[['BX', 'BY', 'BZ', 'B_PERP1', 'B_PERP2']]
+        sheath_windows_df = get_sheath_intervals('/data/juno_spacecraft/data/crossings/crossingmasterlist/jno_crossings_master_v6.txt')
         del(mag_class)
         
         start_datetime = mag_data.index[0]
@@ -48,6 +49,17 @@ def _plots(start_datetime, end_datetime, window_size, days_per_graph, major, min
             
             b_perp = np.sqrt(graph_data.B_PERP1**2 + graph_data.B_PERP2**2).to_numpy()
             cwt = CWTData(graph_data.index, b_perp, 60, min_frequency, max_frequency)
+            cwt.remove_sheath()
+            
+            sheath_window = False
+            data = graph_data
+            for index, row in sheath_windows_df.iterrows():
+                if (graph_data.index.min() < row.START < graph_data.index.max()) or\
+                (graph_data.index.min() < row.END < graph_data.index.max()):
+                    sheath_window = True
+                    data = data[(data.index < row.START) | (data.index > row.END)]
+            if sheath_window:
+                graph_data = data
             
             grid = gs.GridSpec(2, 2, wspace=0.265)
             fig = plt.figure(figsize=(20, 10))
@@ -56,7 +68,7 @@ def _plots(start_datetime, end_datetime, window_size, days_per_graph, major, min
             plot_class = PlotClass(ax0, ylabel='Magnetic Field')
             plot_class.plot(graph_data.index, [graph_data.BX, graph_data.BY, graph_data.BZ], True,
                             ['BX', 'BY', 'BZ'])
-            plot_class.xaxis_datetime_tick_labels(False)
+            plot_class.xaxis_datetime_tick_labels(True)
             ax1 = fig.add_subplot(grid[1,0])
             cwt.cwt_plot(ax1, False, True, x_ticks_labeled=True)
             ax2 = fig.add_subplot(grid[:,1])
@@ -68,16 +80,16 @@ def _plots(start_datetime, end_datetime, window_size, days_per_graph, major, min
 
 def graph_peaks(start_iso, end_iso, save_location, window_size,
                 days_per_graph, max_frequency, min_frequency,
-                major='1D', minor='12H', freq_per_bin=4):
+                major='1D', minor='12H'):
 
-    lat_windows_df = time_in_lat_window(start_iso, end_iso, target_latitude=10)
+    lat_windows_df = time_in_lat_window(start_iso, end_iso, 0, -10)
     print(lat_windows_df)
     for index, row in lat_windows_df.iterrows():
         start = row['START']
         end = row['END']
         total_hist_save = (f'Cumulative histogram from {start.date()} to {end.date()}')
         _plots(start, end, window_size, days_per_graph, major, minor,
-               min_frequency, max_frequency, freq_per_bin, save_location)    
+               min_frequency, max_frequency, save_location)    
 
 
     
@@ -251,13 +263,13 @@ if __name__ == '__main__':
     # min_f = 1/timedelta(hours=1).total_seconds()
     # find_disturbed(start_time, end_time, 60, '5d', '6H', min_f, max_f, save_loc)
     
-    # start_time = '2016-07-31T00:00:00'
-    # end_time = '2020-11-10T23:59:59'
-    # save_loc = r'/home/aschok/Documents/figures/cwt/testing'
-    # max_f = 1/timedelta(hours=1).total_seconds()
-    # min_f = 1/timedelta(hours=20).total_seconds()
-    # graph_peaks(start_time, end_time, save_loc, days_per_graph=50, window_size=60,
-    #             max_frequency=max_f, min_frequency=min_f, major='5d', minor='12H', freq_per_bin=4)
+    start_time = '2016-07-31T00:00:00'
+    end_time = '2016-08-31T23:59:59'
+    save_loc = r'/home/aschok/Documents/figures/cwt/testing'
+    max_f = 1/timedelta(hours=1).total_seconds()
+    min_f = 1/timedelta(hours=20).total_seconds()
+    graph_peaks(start_time, end_time, save_loc, days_per_graph=16, window_size=60,
+                max_frequency=max_f, min_frequency=min_f, major='5d', minor='12H')
 
     # start_time = '2019-12-31T00:00:00'
     # end_time = '2020-11-10T00:00:00'
@@ -266,7 +278,7 @@ if __name__ == '__main__':
     # save_loc = '/home/aschok/Documents/figures/cwt/testing'
     # psd_compare(start_time, end_time, 24, min_f, max_f, save_loc)
 
-    start_time = '2016-07-25T00:00:00'
-    end_time = '2020-11-10T00:00:00'
-    heating_distributions(start_time, end_time)
+    # start_time = '2016-07-25T00:00:00'
+    # end_time = '2020-11-10T00:00:00'
+    # heating_distributions(start_time, end_time)
     
