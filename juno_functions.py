@@ -146,6 +146,7 @@ def _get_files(start_time, end_time, file_type, data_folder, *args):
                 file_path = os.path.join(parent, file_name)
                 file_date = datetime.strptime(
                     date_re.search(file_name).group(), '%Y%j')
+                
                 instrument_match = instrument_re.findall(file_name)
                 if file_date.date() in datetime_array and sorted(args) == sorted(instrument_match):
                     file_paths = np.append(file_paths, file_path)
@@ -168,3 +169,12 @@ def find_orb_num(date_time):
         if (date_time > orb_start) & (date_time < orb_end):
             return orbs['No.'][index]
         
+def get_orbit_data():
+    orbs = pd.read_fwf('/data/juno_spacecraft/data/orbits/juno_rec_orbit_v08.orb')
+    orbs = orbs.drop(index=[0])
+    orbs = orbs[['No.', 'Event UTC APO']]
+    orbs = orbs.rename(columns={'No.':'Orb', 'Event UTC APO': 'Start'})
+    orbs = orbs.set_index('Orb')
+    orbs.Start = np.array([datetime.strptime(orbs['Start'][i], '%Y %b %d %H:%M:%S') for i in orbs.index])
+    return orbs
+    

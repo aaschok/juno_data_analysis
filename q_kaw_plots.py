@@ -178,7 +178,7 @@ def q_plot_each_orb():
                                         'mean', bins)
     bin_std, std_edges, num = binned_statistic(q_v_pos_data.radial, q_v_pos_data.q_kaw,
                                             'std', bins)
-    edges += 0.5
+    edges += 0.5 
     ax3.plot(edges[:-1], means, label='avg $q_{kaw}$')
     ax3.plot(edges[:-1], means + bin_std, label='avg $q_{kaw}$ + 1$\sigma$')
     ax3.set_xlabel('R ($R_j$)')
@@ -290,4 +290,4 @@ def radial_q_kaw_for_poster():
     plt.close(fig)  
     
 if __name__ == '__main__':
-    orbits_plot()
+    q_plot_all_orbs()

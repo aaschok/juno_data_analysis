@@ -6,6 +6,7 @@ import spiceypy as spice
 from old.spacedataclasses import *
 from mpl_toolkits.axes_grid1.inset_locator import inset_axes
 import matplotlib.dates as mdates
+from juno_classes import MagData
 
 class CrossingClass():
     
@@ -21,30 +22,15 @@ class CrossingClass():
         
         
     def getMag(self,fgm_folder):
-                
-        temp_df = pd.DataFrame()
-        
-        p = re.compile(r'\d{7}')
-        
-        for parent,child,files in os.walk(fgm_folder):
-            for file_name in files:
-                if file_name.endswith('.csv'):
-                    file_path = os.path.join(fgm_folder,file_name)
-                    fgm_date = p.search(file_name).group()
-                    fgm_date = datetime.datetime.strptime(fgm_date,'%Y%j')
-                    
-                    if self.date_range[0].date() == fgm_date.date() or self.date_range[1].date() == fgm_date.date():
-                        
-                        fgm_data = pd.read_csv(file_path)
-                        temp_df = temp_df.append(fgm_data,ignore_index=True)
-        temp_df = temp_df.sort_values(by=['SAMPLE UTC'])    
-        self.time_list = [datetime.datetime.fromisoformat(i) for i in temp_df['SAMPLE UTC']]
-        crossing_index_begin = int(self.time_list.index(min(self.time_list,key=lambda x: abs(x-(self.date_range[0])))))
-        crossing_index_end = int(self.time_list.index(min(self.time_list,key=lambda x: abs(x-(self.date_range[1])))))
-        self.data['TIME'] = temp_df['SAMPLE UTC'][crossing_index_begin:crossing_index_end+1]
-        self.data['BX DATA'] = temp_df['BX PLANETOCENTRIC'][crossing_index_begin:crossing_index_end+1]
-        self.data['BY DATA'] = temp_df['BY PLANETOCENTRIC'][crossing_index_begin:crossing_index_end+1]
-        self.data['BZ DATA'] = temp_df['BZ PLANETOCENTRIC'][crossing_index_begin:crossing_index_end+1]
+        start_time = (self.crossing_time - datetime.timedelta(hours=self.width)).isoformat()
+        end_time = (self.crossing_time + datetime.timedelta(hours=self.width)).isoformat()
+        print(start_time, end_time)
+        mag_class = MagData( start_time, end_time, data_folder = '/data/juno_spacecraft/data/fgm')   
+        print(mag_class.data_df)
+        self.data['TIME'] = mag_class.data_df.index.strftime('%Y-%m-%dT%H:%M:%S').to_numpy()
+        self.data['BX DATA'] = mag_class.data_df.BX.to_numpy()
+        self.data['BY DATA'] = mag_class.data_df.BY.to_numpy()
+        self.data['BZ DATA'] = mag_class.data_df.BZ.to_numpy()
         print(f'Mag data pulled {self.crossing_time}')
         
     def getJade(self,jade_folder):
@@ -211,29 +197,22 @@ def single_extract():
         crossings.packageCDF(save_loc)
 
 def custom_intervals():
-    intervals_df=pd.DataFrame({'Start': ['2017-05-06T17:15:39',
-                                         '2017-06-02T13:39:00',
-                                         '2017-06-16T06:00:00',
-                                         '2017-06-28T10:40:34',
-                                         '2017-10-02T12:38:17'],
-                               'End': ['2017-05-07T00:45:09',
-                                       '2017-06-02T16:37:00',
-                                       '2017-06-17T14:30:00',
-                                       '2017-06-29T08:44:03',
-                                       '2017-10-03T09:54:06']})
+    intervals_df = pd.read_csv('/home/aschok/Downloads/clist-fullday.txt')
     fgm_folder = r"/data/juno_spacecraft/data/fgm"
     jade_folder = r"/data/juno_spacecraft/data/jad"
-    save_loc = r'/home/aschok/Documents/cdf/crossings_v6_CDFs/longwindows'
-    meta_kernel = (f'/data/juno_spacecraft/data/meta_kernels/juno_2017.tm')
+    save_loc = r'/home/aschok/Documents/cdf/long_crossing_CDFs_apr_2022'
+    meta_kernel_path = (f'/data/juno_spacecraft/data/meta_kernels')
     for index, row in intervals_df.iterrows():
         start = datetime.datetime.fromisoformat(row.Start)
-        end = datetime.datetime.fromisoformat(row.End)
+        end = datetime.datetime.fromisoformat(row.End)+datetime.timedelta(hours=23, minutes=59, seconds=59)
         cross_time = (start + (end - start)/2).isoformat()
+        cross_datetime = datetime.datetime.fromisoformat(cross_time)
         cross_width = ((end-start)/2).total_seconds()/3600
         crossings = CrossingClass(cross_time, 'long', cross_width)
         crossings.getMag(fgm_folder)
         try: crossings.getJade(jade_folder)
         except ValueError: pass
+        meta_kernel = f'{meta_kernel_path}/juno_{cross_datetime.year}.tm'
         crossings.getPosition(meta_kernel)       
         crossings.packageCDF(save_loc)
 
@@ -244,7 +223,7 @@ def test():
     meta_kernel = r'juno_2017.tm'
     save_loc = r'/home/aschok/Documents'
         
-    cdf = pycdf.CDF('/home/aschok/Documents/2017042T030000_Sheath.cdf')
+    cdf = pycdf.CDF('/home/aschok/Documents/cdf/long_crossing_CDFs_apr_2022/2016201T115959_long.cdf')
     
     fig, (ax1, ax2, ax3) = plt.subplots(3,1)
     time = [datetime.datetime.fromisoformat(i) for i in cdf['MAG TIME']]

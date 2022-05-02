@@ -13,8 +13,8 @@ import re
 import requests
 import pandas as pd
 
-start_date = datetime.datetime.strptime('2016-189', '%Y-%j')
-end_date = datetime.datetime.strptime('2020-075', '%Y-%j')
+start_date = datetime.datetime.strptime('2016-267', '%Y-%j')
+end_date = datetime.datetime.strptime('2016-291', '%Y-%j')
 date_range = pd.date_range(start_date.isoformat(), end_date.isoformat(), freq='D')
 fgm_data_index_df = pd.read_csv('/data/juno_spacecraft/data/index/fgm_data_index.TAB')
 cols = ['VOLUME_ID  ', 'SID             ', 'DATA_SET_ID         ',
@@ -25,7 +25,7 @@ cols = ['VOLUME_ID  ', 'SID             ', 'DATA_SET_ID         ',
 file_name_regex = re.compile(r'fgm(.+?)$')
 date_regex = re.compile(r'\d{7}')
 for index, row in fgm_data_index_df.iterrows():
-    if row[cols[1]].strip(' ') == 'PC 1 MINUTE':
+    if row[cols[1]].strip(' ') == 'PC 1 SECOND':
         file_date = datetime.datetime.strptime(date_regex.search(row[6]).group(), '%Y%j')
         if file_date in date_range:
             archive_file_loc = row[6].strip(' ').strip('.lbl')

@@ -1,6 +1,7 @@
 
 import re
 import pickle
+import math
 import struct
 from datetime import datetime, timedelta
 from os import fsdecode
@@ -89,7 +90,7 @@ class PosData():
     def sys_3(self):
         for year in ['2016', '2017', '2018', '2019', '2020']:
                 spice.furnsh(f'/data/juno_spacecraft/data/meta_kernels/juno_{year}.tm')
-            
+        
         et_array = [spice.utc2et(i) for i in self.datetime_series.strftime('%Y-%m-%dT%H:%M:%S')]
         positions, lt = spice.spkpos('JUNO', et_array,
                                     'IAU_JUPITER', 'NONE', 'JUPITER')
@@ -116,6 +117,9 @@ class PosData():
         e = 249*deg2rad
         CentEq2 = (a*np.tanh(b*R - c) + d)*np.sin(lon*deg2rad - e)
         z_equator = positions.T[2]/7.14e4 - R*np.sin(CentEq2)
+        self.sys_3_df = pd.DataFrame({'radial_3': rad/7.14e4, 'lon_3': lon,
+                                'lat_3': lat, 'eq_dist': z_equator},
+                                     index=self.datetime_series)
 
 class MagData:
     """Collects and stores all mag data between two datetimes.
@@ -134,7 +138,7 @@ class MagData:
 
     """
 
-    def __init__(self, start_time, end_time, data_folder='/data/juno_spacecraft/data/fgm',
+    def __init__(self, start_time, end_time, data_folder='/data/juno_spacecraft/data/fgm_ss',
                  instrument=['fgm_jno', 'r1s']):
         """Find and store all data between two datetimes.
 
@@ -163,8 +167,8 @@ class MagData:
     def _get_data(self):
         for mag_csv in self.data_files:
             csv_df = pd.read_csv(mag_csv)
-            csv_df = csv_df.drop(['DECIMAL DAY', 'INSTRUMENT RANGE', 'X', 'Y', 'Z'], axis=1)
-            csv_df.columns = ['DATETIME', 'BX', 'BY', 'BZ']
+            csv_df = csv_df.drop(['DECIMAL DAY', 'INSTRUMENT RANGE'], axis=1)
+            csv_df.columns = ['DATETIME', 'BX', 'BY', 'BZ', 'X', 'Y', 'Z']
             csv_df = csv_df.set_index('DATETIME')
             csv_df.index = csv_df.index.astype('datetime64[ns]').floor('S')
             self.data_df = self.data_df.append(csv_df)
@@ -258,6 +262,28 @@ class MagData:
         self.data_df = self.data_df.dropna()
         del(avg_datetime_index, mag_avg_df, temp_avg_df)
 
+    def cart_to_sphere(self):
+        x = self.data_df.X
+        y = self.data_df.Y
+        z = self.data_df.Z
+        bx = self.data_df.BX
+        by = self.data_df.BY
+        bz = self.data_df.BZ
+        time = self.data_df.index
+        XsqPlusYsq = x**2 + y**2
+        r = np.sqrt(XsqPlusYsq + z**2)               # r
+        myatan2 = np.vectorize(math.atan2)
+        theta = myatan2(np.sqrt(XsqPlusYsq),z)     # theta
+        phi = myatan2(y,x)                           # phi
+        xhat = 1 #x/r
+        yhat = 1 #y/r
+        zhat = 1 #z/r
+        Br = bx*np.sin(theta)*np.cos(phi)*xhat + by*np.sin(theta)*np.sin(phi)*yhat + bz*np.cos(theta)*zhat
+        Btheta = bx*np.cos(theta)*np.cos(phi)*xhat + by*np.cos(theta)*np.sin(phi)*yhat - bz*np.sin(theta)*zhat
+        Bphi = -bx*np.sin(phi)*xhat + by*np.cos(phi)*yhat
+        temp_df = pd.DataFrame({'Br': Br, 'Btheta': Btheta, 'Bphi': Bphi}, index=time)
+        self.data_df = pd.concat([self.data_df.sort_index(), temp_df.sort_index()], axis=1)
+        
     def mean_field_align(self, window_size=24):
         """Rotate magnetometer data into a mean-field-aligned coordinate system.
             Using the methods described by Khurana & Kivelson[1989]
@@ -403,9 +429,8 @@ class CWTData:
         for index, row in sheath_windows_df.iterrows():
             if (self.time_series.min() < row.START < self.time_series.max()) or\
                 (self.time_series.min() < row.END < self.time_series.max()):
-                    mask = (self.time_series < row.START) | (self.time_series > row.END)
-                    self.time_series = self.time_series[mask]
-                    self.power = self.power[:, mask]
+                    mask = (self.time_series >= row.START) & (self.time_series <= row.END)
+                    self.power[:, mask] = 0
         
     def _peak_finding(self):
 
@@ -452,10 +477,11 @@ class CWTData:
         
         vmin = np.percentile(np.nan_to_num(self.power), 10)
         vmax = np.max(np.nan_to_num(self.power))
+        print(vmin,vmax)
         t = mdates.date2num(self.time_series)
         plot_class = PlotClass(axes)
         plot_class.colormesh(t, self.freqs, self.power, ylabel='Frequency (Hz)', xlabel=xlabel,
-                             title=title, color_bar=colorbar, norm=LogNorm(vmin=vmin, vmax=vmax),
+                             title=title, color_bar=colorbar, norm=LogNorm(),
                              cmap='jet', **kwargs)
         if mark_coi:
             plot_class.plot(self.time_series, self.coi, linestyle='--', color='black')
@@ -588,8 +614,11 @@ class Turbulence(MagData):
         mu_0 = np.pi*4*1e-7
         kperp = (2*np.pi*freq)/(v_rel*np.sin(np.pi/2))  # currently just assumes v rel and B are perpendicular
         rho_i = 1e7 # parameter subject to change, currently an estimation from Tao et al
-        qkaw = (0.5*(delta_b_perp3[b2])*kperp[b2]/np.sqrt(mu_0**3*density))*(1+kperp[b2]**2*rho_i**2)**0.5*(1+(1/(1+kperp[b2]**2*rho_i**2))*(1/(1+1.25*kperp[b2]**2*rho_i**2))**2)
-        qmhd = (delta_b_perp3[b1])*kperp[b1]/(np.sqrt((mu_0**3)*density))
+        
+        qkaw = delta_b_perp3[b2]
+        qmhd = delta_b_perp3[b2]
+        #qkaw = (0.5*(delta_b_perp3[b2])*kperp[b2]/np.sqrt(mu_0**3*density))*(1+kperp[b2]**2*rho_i**2)**0.5*(1+(1/(1+kperp[b2]**2*rho_i**2))*(1/(1+1.25*kperp[b2]**2*rho_i**2))**2)
+        #qmhd = (delta_b_perp3[b1])*kperp[b1]/(np.sqrt((mu_0**3)*density))
         
         return qmhd, qkaw
     
@@ -837,8 +866,9 @@ class JadeData():
                     temp = np.asarray(temp).reshape(dataObjectData['DIM1'],dataObjectData['DIM2'])  #The data is put into a matrix of the size defined in the label
                     dataArray = [np.mean(row) for row in temp]  #Each rows average is found to have one column 
                     
-                    temp_df = pd.DataFrame({dateTimeStamp: [np.log(dataArray)]}).transpose()
-                    self.elec_df = self.elec_df.append(temp_df)                    
+                    temp_df = pd.DataFrame({dateTimeStamp: np.log(dataArray)}).transpose()
+                    self.elec_df = self.elec_df.append(temp_df) 
+                                      
 
                     dataObjectData = label.dataNameDict['DIM1_E'] #Label data for the data is found 
                     startByte = dataObjectData['START_BYTE']
@@ -849,6 +879,120 @@ class JadeData():
                     dataArray = [row[0] for row in temp]  #Each rows average is found to have one column 
                     if self.elec_dims is None:
                         self.elec_dims = dataArray
+
+
+# Delameres Jade Class      
+class JadClass:
+    def __init__(self,timeStart, timeEnd):
+        self.jad_tm = 0.0
+        self.jad_arr = 0.0
+        self.jad_mean = 0.0
+        self.timeStart = timeStart
+        self.timeEnd = timeEnd
+        self.z_cent = 0.0
+        self.R = 0.0
+        self.bc_df = 0.0
+        self.bc_id = 0.0
+
+        self.read_data()
+        self.sys_3_data()
+        self.get_mp_bc()
+        self.get_bc_mask()
+        
+    def read_data(self):      
+        dataFolder = pathlib.Path('/data/juno_spacecraft/data/jad')
+        datFiles = _get_files(self.timeStart,self.timeEnd,'.DAT',dataFolder,'JAD_L30_LRS_ION_ANY_CNT') 
+        jadeIon = JadeData(datFiles,self.timeStart,self.timeEnd)
+        print('getting ion data....')
+        jadeIon.getIonData()
+        print('ion data retrieved...')
+        #plt.figure()
+        #if date in jadeIon.dataDict.keys(): #Ion spectrogram portion
+        jadeIonData = jadeIon.dataDict
+        jadeIonData = jadeIon.ion_df  
+        
+        self.jad_mean = []
+        self.jad_tm = jadeIon.ion_df.index
+        self.jad_arr = jadeIon.ion_df.to_numpy()
+        #plt.imshow(np.transpose(jad_arr),origin='lower',aspect='auto',cmap='jet')
+        #plt.show()
+        sz = self.jad_arr.shape
+        for i in range(sz[0]):
+            self.jad_mean.append(self.jad_arr[i,:-2].mean())
+            #self.jad_max.append(self.jad_arr[i,:-2].max())
+            #plt.figure()
+            #plt.plot(jad_tm,jad_mean)
+            #plt.plot(jad_tm,jad_max)
+            #plt.show()
+        self.jad_mean = np.array(self.jad_mean)
+
+    def sys_3_data(self):
+        for year in ['2016', '2017', '2018', '2019', '2020']:
+            spice.furnsh(f'/data/juno_spacecraft/data/meta_kernels/juno_{year}.tm')
+        
+        index_array = self.jad_tm
+        et_array = [spice.utc2et(i) for i in index_array.strftime('%Y-%m-%dT%H:%M:%S')]
+        positions, lt = spice.spkpos('JUNO', et_array,
+                                     'IAU_JUPITER', 'NONE', 'JUPITER')
+        rad = np.array([])
+        lat = np.array([])
+        lon = np.array([])
+        for vector in positions:
+            r, la, lo = spice.recsph(vector)
+            rad = np.append(rad, r)
+            lat = np.append(lat, la*180/np.pi)
+            lon = np.append(lon, lo*180/np.pi)
+        
+        x = np.array(positions.T[0])
+        y = np.array(positions.T[1])
+        z = np.array(positions.T[2])
+        spice.kclear()
+        
+        deg2rad = np.pi/180
+        a = 1.66*deg2rad
+        b = 0.131
+        R = np.sqrt(x**2 + y**2 + z**2)/7.14e4
+        c = 1.62
+        d = 7.76*deg2rad
+        e = 249*deg2rad
+        CentEq2 = (a*np.tanh(b*R - c) + d)*np.sin(lon*deg2rad - e)
+        self.z_cent = positions.T[2]/7.14e4 - R*np.sin(CentEq2)
+        self.R = R
+        #temp_df = pd.DataFrame({'radial_3': rad/7.14e4, 'lon_3': lon,
+        #                        'lat_3': lat, 'eq_dist': z_equator}, index=index_array)
+        
+        #self.q_kaw_df = pd.concat([self.q_kaw_df.sort_index(), temp_df.sort_index()], axis=1)
+        return 
+
+    def get_jad_dist(self):
+        data = self.jad_mean
+        wh = np.logical_and((self.z_cent < 1), (self.z_cent > -1))
+        print(wh)
+        #data = data[wh]
+        plt.figure()
+        plt.hist(data)
+        plt.show()
+    
+    def get_mp_bc(self):
+        self.bc_df = pd.read_csv('./jno_crossings_master_fixed_v6.txt')
+        self.bc_df = self.bc_df.drop(['NOTES'], axis=1)
+        self.bc_df.columns = ['CASE','ORBIT','DATE', 'TIME', 'ID']
+        datetime = self.bc_df['DATE'][:] + ' ' + self.bc_df['TIME'][:]
+        self.bc_df['DATETIME'] = datetime
+        self.bc_df = self.bc_df.set_index('DATETIME')
+        return 
+
+    def get_bc_mask(self):
+        self.bc_id = np.ones(len(self.jad_tm))
+        id = self.bc_df['ID'][:]
+        bc_t = self.bc_df.index
+        t = self.jad_tm
+        self.bc_id[t < bc_t[0]] = 0 #no ID
+        for i in range(len(bc_t)-1):
+            mask = np.logical_and(bc_t[i] <= t,t < bc_t[i+1])
+            if id[i] == 'Sheath':
+                self.bc_id[mask] = 0
+        return 
 
 if __name__ == '__main__':
     start = '2016-07-31T00:00:00'
@@ -878,3 +1022,4 @@ if __name__ == '__main__':
                          , pickle_file)
             print(f'Saved data from {start_datetime} to {end_datetime}')
             pickle_file.close()
+            

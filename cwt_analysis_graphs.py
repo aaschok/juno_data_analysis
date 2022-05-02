@@ -6,6 +6,7 @@ Created on Tue Jul 20 10:30:04 2021
 @author: aschok
 """
 from datetime import date, datetime, timedelta
+import pickle
 from re import T
 
 import matplotlib.dates as mdates
@@ -18,20 +19,26 @@ import spiceypy as spice
 from matplotlib.colors import LogNorm
 from scipy import integrate, signal
 
-from juno_classes import CWTData, MagData, PlotClass, Turbulence
-from juno_functions import time_in_lat_window, get_sheath_intervals
+from juno_classes import CWTData, MagData, PlotClass, Turbulence, PosData
+from juno_functions import time_in_lat_window, get_sheath_intervals, find_orb_num, get_orbit_data
 
 
-def _plots(start_datetime, end_datetime, window_size, days_per_graph, major, minor,
+def _plots(start_datetime, end_datetime, window_size, days_per_graph,
                  min_frequency, max_frequency, save_location):
         
         print(start_datetime)
         print(end_datetime)
         mag_class = MagData(start_datetime.isoformat(), end_datetime.isoformat())
         mag_class.downsample_data(60)
+        mag_class.cart_to_sphere()
         mag_class.mean_field_align(window_size=window_size)
-        mag_data = mag_class.data_df[['BX', 'BY', 'BZ', 'B_PERP1', 'B_PERP2']]
+        mag_data = mag_class.data_df[['BX', 'BY', 'BZ', 'B_PERP1', 'B_PERP2', 'Br', 'Btheta', 'Bphi']]
         sheath_windows_df = get_sheath_intervals('/data/juno_spacecraft/data/crossings/crossingmasterlist/jno_crossings_master_v6.txt')
+        position_class = PosData(mag_data.index)
+        position_class.sys_3()
+        sys_3_df = position_class.sys_3_df
+        
+        
         del(mag_class)
         
         start_datetime = mag_data.index[0]
@@ -59,26 +66,60 @@ def _plots(start_datetime, end_datetime, window_size, days_per_graph, major, min
                     sheath_window = True
                     data = data[(data.index < row.START) | (data.index > row.END)]
             if sheath_window:
-                graph_data = data
+                graph_data = data                
             
             grid = gs.GridSpec(2, 2, wspace=0.265)
             fig = plt.figure(figsize=(20, 10))
             fig.suptitle(f'{start_datetime.date()} to {end_datetime.date()}', fontsize=20)
             ax0 = fig.add_subplot(grid[0,0])
             plot_class = PlotClass(ax0, ylabel='Magnetic Field')
-            plot_class.plot(graph_data.index, [graph_data.BX, graph_data.BY, graph_data.BZ], True,
-                            ['BX', 'BY', 'BZ'])
+            plot_class.plot(graph_data.index, [graph_data.Br, graph_data.Btheta, graph_data.Bphi],
+                            True, ['Br', 'Btheta', 'Bphi'])
+            
+            # Z_centrifugal plotted
+            sys_3_graph = sys_3_df[start_datetime.isoformat(): end_datetime.isoformat()]
+            ax_sys3 = ax0.twinx()
+            ax_sys3.plot(sys_3_graph.index, sys_3_graph.eq_dist, label='sys_3')
+            ax_sys3.set_ylabel('Z_cent (R_j)')
+            ax_sys3.set_title(f'Distance Range {round(sys_3_df.radial_3.loc[start_datetime.isoformat()],2)} $R_j$ - {round(sys_3_df.radial_3.loc[end_datetime.isoformat()],2)} $R_j$')
             plot_class.xaxis_datetime_tick_labels(True)
+            
+            # Jade Mean Counts Plotted
+            orb_num = find_orb_num(start_datetime)
+            try:
+                with open('/home/delamere/Juno/jad_mean_orbit_{orb_num}.pkl', 'rb') as jad_mean_file:
+                    mean_data = pickle.load(jad_mean_file)
+                    jad_mean_file.close()
+                plot_index = np.where((mean_data.jad_tm >= start_datetime) & (mean_data.jad_tm <= end_datetime))
+                ax0.plot(mean_data.jad_tm[plot_index], mean_data.jad_mean[plot_index], label='mean_counts')
+            except:
+                pass
+            ax0.legend()
+            
             ax1 = fig.add_subplot(grid[1,0])
             cwt.cwt_plot(ax1, False, True, x_ticks_labeled=True)
             ax2 = fig.add_subplot(grid[:,1])
             cwt.psd_plot(ax2, 'hour')
+            ax2.axvline(1/timedelta(hours=5).total_seconds(), color='gray', linestyle='--')
+            ax2.axvline(1/timedelta(hours=10).total_seconds(), color='gray', linestyle='--')
             plt.savefig(f'{save_location}/PSD_{start_datetime.date()}_{end_datetime.date()}',
                         bbox_inches='tight', pad_inches=0.05, dpi=150)
-            print(f'Peaks for {start_datetime} to {end_datetime} plotted')
+            print(f'{start_datetime} to {end_datetime} plotted')
             plt.close(fig)
+            
+            cwt_data = {'Time': cwt.time_series, 'Data': cwt.power, 'Freq':cwt.freqs}
+            cwt_pickle_file = f'/home/aschok/Documents/data/pickled_cwt_psd/cwt_{start_datetime.strftime("%Y-%jT%H:%M:%S")}-{end_datetime.strftime("%Y-%jT%H:%M:%S")}.pkl'
+            with open(cwt_pickle_file, 'wb') as pkl:
+                pickle.dump(cwt_data, pkl)
+                pkl.close()
+                
+            psd_data = {'Freqs': cwt.freqs, 'PSD': cwt.psd}
+            psd_pickle_file = f'/home/aschok/Documents/data/pickled_cwt_psd/psd_{start_datetime.strftime("%Y-%jT%H:%M:%S")}-{end_datetime.strftime("%Y-%jT%H:%M:%S")}.pkl'
+            with open(psd_pickle_file, 'wb') as pkl:
+                pickle.dump(psd_data, pkl)
+                pkl.close()
 
-def graph_peaks(start_iso, end_iso, save_location, window_size,
+def graph_peaks_in_lat(start_iso, end_iso, save_location, window_size,
                 days_per_graph, max_frequency, min_frequency,
                 major='1D', minor='12H'):
 
@@ -87,12 +128,20 @@ def graph_peaks(start_iso, end_iso, save_location, window_size,
     for index, row in lat_windows_df.iterrows():
         start = row['START']
         end = row['END']
-        total_hist_save = (f'Cumulative histogram from {start.date()} to {end.date()}')
         _plots(start, end, window_size, days_per_graph, major, minor,
                min_frequency, max_frequency, save_location)    
 
-
-    
+def graph_peaks_in_orb(orbits, save_loc, window_size,
+                days_per_graph, max_frequency, min_frequency,
+                major='1D', minor='12H'):
+    orbit_df = get_orbit_data()
+    for orb_num in orbits:
+        start = orbit_df['Start'][orb_num]
+        end = orbit_df['Start'][orb_num+1]
+        save_location = f'{save_loc}/orbit_{orb_num}'
+        _plots(start, end, window_size, days_per_graph, major, minor,
+               min_frequency, max_frequency, save_location) 
+            
 def find_disturbed(start, end, window_size, major, minor, min_freq, max_freq, save):            
     
     def _disturbed_plot(start_datetime, end_datetime, window_size, major, minor, min_frequency, max_frequency,
@@ -263,12 +312,19 @@ if __name__ == '__main__':
     # min_f = 1/timedelta(hours=1).total_seconds()
     # find_disturbed(start_time, end_time, 60, '5d', '6H', min_f, max_f, save_loc)
     
-    start_time = '2016-07-31T00:00:00'
-    end_time = '2016-08-31T23:59:59'
-    save_loc = r'/home/aschok/Documents/figures/cwt/testing'
+    # start_time = '2016-07-31T00:00:00'
+    # end_time = '2016-08-31T23:59:59'
+    # save_loc = r'/home/aschok/Documents/figures/cwt/testing'
+    # max_f = 1/timedelta(hours=1).total_seconds()
+    # min_f = 1/timedelta(hours=10).total_seconds()
+    # graph_peaks(start_time, end_time, save_loc, days_per_graph=1, window_size=60,
+    #             max_frequency=max_f, min_frequency=min_f, major='5d', minor='12H')
+
+    orbits = np.arange(12, 18)
+    save_loc = r'/home/aschok/Documents/figures/cwt/cwt-3day'
     max_f = 1/timedelta(hours=1).total_seconds()
     min_f = 1/timedelta(hours=20).total_seconds()
-    graph_peaks(start_time, end_time, save_loc, days_per_graph=16, window_size=60,
+    graph_peaks_in_orb(orbits, save_loc, days_per_graph=3, window_size=30,
                 max_frequency=max_f, min_frequency=min_f, major='5d', minor='12H')
 
     # start_time = '2019-12-31T00:00:00'
