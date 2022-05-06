@@ -80,17 +80,34 @@ class PlotClass:
             cbr = plt.colorbar(cwt, cax=cax)
             cbr.set_label('Magnitude', rotation=270, labelpad=5, size=8)
 
-class PosData():
+class PosData:
+    """Collects and stores spice position data for of Juno between two datetimes.
+
+    Attributes
+    ----------
+    datetime_series : string
+        Array of datetime objects
+
+    """
     def __init__(self, datetime_series):
         self.datetime_series = datetime_series
         
-    def JSS_Pos_data(self):
-        pass
+    def JSS_position(self):
+        for year in ['2016', '2017', '2018', '2019', '2020']:
+                spice.furnsh(f'/data/juno_spacecraft/data/meta_kernels/juno_{year}.tm')
+            
+        et_array = [spice.utc2et(i) for i in self.datetime_series.strftime('%Y-%m-%dT%H:%M:%S')]
+        positions, lt = spice.spkpos('JUNO', et_array,
+                                    'JUNO_JSS', 'NONE', 'JUPITER')
+        positions = positions.transpose()
+        spice.kclear()
+        self.cart_pos_df = pd.DataFrame({'X':positions[0], 'Y':positions[1], 'Z':positions[2]},
+                                   index=self.datetime_series)
     
     def sys_3(self):
         for year in ['2016', '2017', '2018', '2019', '2020']:
                 spice.furnsh(f'/data/juno_spacecraft/data/meta_kernels/juno_{year}.tm')
-        
+            
         et_array = [spice.utc2et(i) for i in self.datetime_series.strftime('%Y-%m-%dT%H:%M:%S')]
         positions, lt = spice.spkpos('JUNO', et_array,
                                     'IAU_JUPITER', 'NONE', 'JUPITER')
@@ -120,6 +137,327 @@ class PosData():
         self.sys_3_df = pd.DataFrame({'radial_3': rad/7.14e4, 'lon_3': lon,
                                 'lat_3': lat, 'eq_dist': z_equator},
                                      index=self.datetime_series)
+
+class WavData():
+    """Collects and stores all mag data between two datetimes.
+
+    Attributes
+    ----------
+    start_time : string
+        Start datetime in ISO format. e.g. "2016-01-01T00:00:00"
+    end_time : string
+        End datetime in ISO format. e.g. "2016-01-01T00:00:00"
+    data_df : string
+        Pandas dataframe containing magnitometer data indexed by a DatetimeIndex.
+    data_files : list
+        List of filepaths to data files containing data between the two datetimes.
+        This is gotten using an internal function
+
+    """
+
+    def __init__(self, start_time, end_time, data_folder='/data/juno_spacecraft/data/wav',
+                 instrument=['WAV_', '_E_V02']):
+        """Find and store all data between two datetimes.
+
+        Parameters
+        ----------
+        start_time : string
+            Start datetime in ISO format. e.g. "2016-01-01T00:00:00"
+        end_time : string
+           End datetime in ISO format. e.g. "2016-01-01T00:00:00"
+        data_folder : str, optional
+            Path to folder containing csv data files. The default is '/data/juno_spacecraft/data'.
+        instrument : list of strings, optional
+            List of strings that will be in filenames to aid file search.
+                The default is ['fgm_jno', 'r1s'].
+
+        Returns
+        -------
+        None.
+        """
+        self.start_time = start_time
+        self.end_time = end_time
+        self.data_files = self._get_files('CSV', data_folder, *instrument)
+        self.data_df = pd.DataFrame()
+        self.freq = 0.0
+        self.t = 0.0
+        self._get_data()
+
+    def _get_files(self,file_type, data_folder, *args):
+        import os
+        """Find all files between two dates.
+
+        Parameters
+        ----------
+        start_time : string
+        start datetime in ISO format. e.g. "2016-01-01T00:00:00"
+        end_time : string
+        end datetime in ISO format. e.g. "2016-01-01T00:00:00"
+        file_type : string
+        The type of file the magnetometer data is stored in. e.g. ".csv"
+        data_folder : string
+        folder which all data is stored in.
+        *args : string
+        strings in filenames that wil narow down searching.
+        
+        Returns
+        -------
+        file_paths : list
+        List of paths to found files.
+        
+        """
+    
+        if file_type.startswith('.'):
+            pass
+        else:
+            file_type = '.' + file_type
+            datetime_array = pd.date_range(self.start_time, self.end_time, freq='D').date
+            #print(datetime_array)
+            file_paths = []
+            file_dates = []
+            date_re = re.compile(r'\d{7}')
+            instrument_re = re.compile('|'.join(args))
+            for parent, child, files in os.walk(data_folder):
+                for file_name in files:
+                    if file_name.endswith(file_type):
+                        
+                        file_path = os.path.join(parent, file_name)
+                        file_date = datetime.strptime(
+                            date_re.search(file_name).group(), '%Y%j')
+                        instrument_match = instrument_re.findall(file_name)
+                  
+                        if file_date.date() in datetime_array and sorted(args) == sorted(instrument_match):
+
+                            file_paths = np.append(file_paths, file_path)
+                            file_dates = np.append(file_dates, file_date)
+                            
+                            sorting_array = sorted(zip(file_dates, file_paths))
+                            file_dates, file_paths = zip(*sorting_array)
+            del(datetime_array, file_dates)
+                        
+            return file_paths
+        
+        
+    def _get_data(self):
+        for wav_csv in self.data_files:
+            print('opening files....',wav_csv)
+            csv_df = pd.read_csv(wav_csv,skiprows=2)
+            csv_df.drop(csv_df.columns[0],axis=1,inplace=True)
+            csv_df.drop(csv_df.columns[1:27],axis=1,inplace=True)
+            freq = csv_df.iloc[0,1:]
+            #print(freq)
+            csv_df.drop([0,1],axis=0,inplace=True)
+            csv_df.rename(columns={csv_df.columns[0]: "DATETIME"},inplace=True)
+            csv_df['DATETIME'] = pd.to_datetime(csv_df['DATETIME'],format='%Y-%jT%H:%M:%S.%f')
+            
+            #csv_df['DATETIME'] = csv_df['DATETIME'].astype('datetime64[ns]')
+
+            csv_df = csv_df.set_index('DATETIME')
+            
+            
+            csv_df.index = csv_df.index.astype('datetime64[ns]').floor('S')
+            #print(csv_df.index)
+            self.data_df = self.data_df.append(csv_df)
+            #print(self.data_df)
+            self.data_df = self.data_df.sort_index()
+            #print(self.data_df.index, csv_df.index)
+            self.data_df = self.data_df[self.start_time: self.end_time].sort_index()
+            #print(self.data_df.info())
+        self.data_df = self.data_df.iloc[::600,:]
+        self.freq = freq
+        self.t = self.data_df.index
+        del csv_df
+
+    def plot_wav_data(self,thres):
+        from matplotlib import ticker
+        arr = self.data_df.to_numpy()
+        arr = arr.transpose()
+        #plt.contourf(self.t,self.freq,arr.transpose(),levels=50,locator=ticker.LogLocator(),vmin=1e-14, vmax=1e-9)
+        vmin = 1e-14
+        vmax = 1e-10
+        lev = np.linspace(np.log(vmin),np.log(vmax),10)
+        #plt.pcolor(self.t,self.freq[1:35],arr[1:35,:],norm=LogNorm())
+        plt.pcolormesh(self.t,self.freq[1:40],arr[1:40,:],norm=LogNorm(vmin=5e-15, vmax=1e-10))
+        #plt.contourf(self.t,self.freq,arr.transpose(),levels=np.exp(lev),norm = LogNorm())
+        #plt.imshow(arr.transpose(), norm=LogNorm(),aspect='auto',origin='lower') 
+        plt.yscale('log')
+        plt.ylabel('freq (Hertz)')
+        plt.xlabel('time')
+        #plt.ylim([1e2,2e4])
+        plt.colorbar()
+        plt.show()
+
+class JAD_MOM_Data():
+    """Collects and stores all mag data between two datetimes.
+
+    Attributes
+    ----------
+    start_time : string
+        Start datetime in ISO format. e.g. "2016-01-01T00:00:00"
+    end_time : string
+        End datetime in ISO format. e.g. "2016-01-01T00:00:00"
+    data_df : string
+        Pandas dataframe containing magnitometer data indexed by a DatetimeIndex.
+    data_files : list
+        List of filepaths to data files containing data between the two datetimes.
+        This is gotten using an internal function
+
+    """
+
+    def __init__(self, start_time, end_time, data_folder='/home/delamere/Juno/JAD_moments/AGU2020_moments',
+                 instrument=['HEAVIES', 'V03']):
+        """Find and store all data between two datetimes.
+
+        Parameters
+        ----------
+        start_time : string
+            Start datetime in ISO format. e.g. "2016-01-01T00:00:00"
+        end_time : string
+           End datetime in ISO format. e.g. "2016-01-01T00:00:00"
+        data_folder : str, optional
+            Path to folder containing csv data files. The default is '/data/juno_spacecraft/data'.
+        instrument : list of strings, optional
+            List of strings that will be in filenames to aid file search.
+                The default is ['fgm_jno', 'r1s'].
+
+        Returns
+        -------
+        None.
+        """
+        self.start_time = start_time
+        self.end_time = end_time
+        self.data_files = self._get_files('CSV', data_folder, *instrument)
+        self.data_df = pd.DataFrame()
+        #self.freq = 0.0
+        self.t = 0.0
+        self.n = 0.0
+        self.n_sigma = 0.0
+        self.vr = 0.0
+        self.vr_sigma = 0.0
+        self.vtheta = 0.0
+        self.vtheta_sigma = 0.0
+        self.vphi = 0.0
+        self.vphi_sigma = 0.0
+        self.T = 0.0
+        self.T_sigma = 0.0
+        self._get_data()
+        self.plot_jad_data()
+
+    def _get_files(self,file_type, data_folder, *args):
+        import os
+        """Find all files between two dates.
+
+        Parameters
+        ----------
+        start_time : string
+        start datetime in ISO format. e.g. "2016-01-01T00:00:00"
+        end_time : string
+        end datetime in ISO format. e.g. "2016-01-01T00:00:00"
+        file_type : string
+        The type of file the magnetometer data is stored in. e.g. ".csv"
+        data_folder : string
+        folder which all data is stored in.
+        *args : string
+        strings in filenames that wil narow down searching.
+        
+        Returns
+        -------
+        file_paths : list
+        List of paths to found files.
+        
+        """
+    
+        if file_type.startswith('.'):
+            pass
+        else:
+            file_type = '.' + file_type
+            datetime_array = pd.date_range(self.start_time, self.end_time, freq='D').date
+            #print(datetime_array)
+            file_paths = []
+            file_dates = []
+            date_re = re.compile(r'\d{7}')
+            instrument_re = re.compile('|'.join(args))
+            for parent, child, files in os.walk(data_folder):
+                for file_name in files:
+                    if file_name.endswith(file_type):
+                        
+                        file_path = os.path.join(parent, file_name)
+                        file_date = datetime.strptime(
+                            date_re.search(file_name).group(), '%Y%j')
+                        instrument_match = instrument_re.findall(file_name)
+                  
+                        if file_date.date() in datetime_array and sorted(args) == sorted(instrument_match):
+
+                            file_paths = np.append(file_paths, file_path)
+                            file_dates = np.append(file_dates, file_date)
+                            
+                            sorting_array = sorted(zip(file_dates, file_paths))
+                            file_dates, file_paths = zip(*sorting_array)
+            del(datetime_array, file_dates)
+                        
+            return file_paths
+        
+        
+    def _get_data(self):
+        for jad_csv in self.data_files:
+            print('opening files....',jad_csv)
+            csv_df = pd.read_csv(jad_csv)
+            csv_df.rename(columns={csv_df.columns[0]: "DATETIME"},inplace=True)
+            csv_df['DATETIME'] = pd.to_datetime(csv_df['DATETIME'],format='%Y-%jT%H:%M:%S.%f')
+            
+            csv_df = csv_df.set_index('DATETIME')
+            
+            csv_df.index = csv_df.index.astype('datetime64[ns]').floor('S')
+            self.data_df = self.data_df.append(csv_df)
+            self.data_df = self.data_df.sort_index()
+            self.data_df = self.data_df[self.start_time: self.end_time].sort_index()
+        self.data_df.rename(columns={"N_CC": "n", "N_SIGMA_CC": "n_sig", "V_JSSRTP_KMPS[0]": "vr",
+                                     "V_JSSRTP_SIGMA_KMPS[0]": "vr_sig", "V_JSSRTP_KMPS[1]": "vtheta", 
+                                     "V_JSSRTP_SIGMA_KMPS[1]": "vtheta_sig", "V_JSSRTP_KMPS[2]": "vphi", 
+                                     "V_JSSRTP_SIGMA_KMPS[2]": "vphi_sig", "TEMP_EV": "Temp",
+                                     "TEMP_SIGMA_EV": "Temp_sig"}, inplace=True)
+        self.t = self.data_df.index
+        """                    
+        self.n = self.data_df.N_CC
+        self.nave = self.data_df.N_CC.rolling(10).mean()
+        self.n_sigma = self.data_df.N_SIGMA_CC
+        self.vr = self.data_df['V_JSSRTP_KMPS[0]']
+        self.vr_sigma = self.data_df['V_JSSRTP_SIGMA_KMPS[0]']
+        self.vphi = self.data_df['V_JSSRTP_KMPS[1]']
+        self.vphi_sigma = self.data_df['V_JSSRTP_SIGMA_KMPS[1]']
+        self.vtheta = self.data_df['V_JSSRTP_KMPS[2]']
+        self.vtheta_sigma = self.data_df['V_JSSRTP_SIGMA_KMPS[2]']
+        self.T = self.data_df['TEMP_EV']
+        self.T_sigma = self.data_df['TEMP_SIGMA_EV']
+        """
+        del csv_df
+
+    def plot_jad_data(self):
+        from matplotlib import ticker
+        wh = (self.data_df['V_JSSRTP_SIGMA_KMPS[1]'] < 1000) 
+        plt.figure()
+        plt.plot(self.t[wh],self.vphi[wh])
+        plt.plot(self.data_df['V_JSSRTP_KMPS[1]'][wh].rolling(10).mean())
+        plt.show()
+        """
+        arr = self.data_df.to_numpy()
+        arr = arr.transpose()
+        #plt.contourf(self.t,self.freq,arr.transpose(),levels=50,locator=ticker.LogLocator(),vmin=1e-14, vmax=1e-9)
+        vmin = 1e-14
+        vmax = 1e-10
+        lev = np.linspace(np.log(vmin),np.log(vmax),10)
+        #plt.pcolor(self.t,self.freq[1:35],arr[1:35,:],norm=LogNorm())
+        plt.pcolormesh(self.t,self.freq[1:40],arr[1:40,:],norm=LogNorm(vmin=5e-15, vmax=1e-10))
+        #plt.contourf(self.t,self.freq,arr.transpose(),levels=np.exp(lev),norm = LogNorm())
+        #plt.imshow(arr.transpose(), norm=LogNorm(),aspect='auto',origin='lower') 
+        plt.yscale('log')
+        plt.ylabel('freq (Hertz)')
+        plt.xlabel('time')
+        #plt.ylim([1e2,2e4])
+        plt.colorbar()
+        plt.show()
+        """
+
 
 class MagData:
     """Collects and stores all mag data between two datetimes.
@@ -220,7 +558,6 @@ class MagData:
         x = plot_data.index
         y = plot_data.to_numpy().T
         
-        
         plot_class = PlotClass(axes)
         plot_class.plot(x, y, magnitude=plot_magnitude, data_labels=data_labels,
                         title=plot_title, xlabel=xlabel, ylabel=ylabel, **kwargs)
@@ -240,27 +577,21 @@ class MagData:
         None.
 
         """
-        mag_avg_df = pd.DataFrame()
-        # This loop will average out the data to be at a lower sample rate
-        num_steps = round((self.data_df.index[-1] - self.data_df.index[0])
-                          / pd.Timedelta(seconds=downsampled_rate))
-        end_datetime = self.data_df.index[0].replace(microsecond=0)
-        for i in range(0, num_steps):
-            start_datetime = end_datetime
-            end_datetime = start_datetime + \
-                pd.Timedelta(seconds=downsampled_rate)
-            avg_datetime_index = pd.DatetimeIndex([
-                (start_datetime + pd.Timedelta(seconds=int(downsampled_rate/2))).isoformat()
-            ])
-            temp_avg_df = pd.DataFrame(
-                self.data_df[start_datetime.isoformat(): end_datetime.isoformat()].mean()
-            ).transpose().set_index(avg_datetime_index)
-            mag_avg_df = mag_avg_df.append(temp_avg_df).dropna()
 
-        self.data_df = mag_avg_df.sort_index()
-        self.data_df.index.name = 'DATETIME'
-        self.data_df = self.data_df.dropna()
-        del(avg_datetime_index, mag_avg_df, temp_avg_df)
+        """Downsamples data to larger time steps between samples.
+        Parameters
+        ----------
+        downsampled_rate : int, optional
+            Desired sample rate of data in seconds. The default is 60 seconds.
+        Returns
+        -------
+        None.
+        """        
+        
+        self.data_df = self.data_df.resample(f'{downsampled_rate}s',
+                                             origin='start',
+                                             closed='left').mean().shift(round(downsampled_rate/2), freq='s')
+
 
     def cart_to_sphere(self):
         x = self.data_df.X
@@ -300,64 +631,32 @@ class MagData:
         None.
 
         """
-        # A windows of size 'window_size' in minutes is then moved along the data
-        # An average inside of the window is found for each entry
-        mean_mag_data = pd.DataFrame({'MEAN_BX': [], 'MEAN_BY': [], 'MEAN_BZ': []})
-        finish_datetime = (self.data_df.index[-1]
-        - timedelta(minutes=np.floor(window_size/2)))
-        for datetime_index in self.data_df.index:
-            start_datetime = datetime_index
-            end_datetime = start_datetime + timedelta(minutes=window_size)
-            mean_datetime_index = pd.DatetimeIndex([
-                (start_datetime + timedelta(minutes=round(window_size/2))).isoformat()
-            ])
-            temp_mean = self.data_df[start_datetime.isoformat(): end_datetime.isoformat()].mean()
-            mean_mag_data = mean_mag_data.append(pd.DataFrame(
-                {'MEAN_BX': temp_mean.BX,
-                 'MEAN_BY': temp_mean.BY,
-                 'MEAN_BZ': temp_mean.BZ}, index=mean_datetime_index))
-            
-            if mean_datetime_index == finish_datetime:
-                break
-        # mean_mag_data and data_df are cut to align the time series of each
-        # mag_data loses half of the time_window in the front
-        # mean_mag_data loses half of the time window in the end
-        # The two dataframes are then concatenated into one for simplicity
-        # self.data_df = self.data_df.drop(self.data_df[: (self.data_df.index[0] +
-        #     timedelta(minutes=round(window_size / 2) - 1)
-        # ).isoformat()].index)
-        self.data_df = self.data_df[mean_mag_data.index[0].isoformat(): 
-                                    mean_mag_data.index[-1].isoformat()]
-        self.data_df = pd.concat([self.data_df, mean_mag_data], axis=1)
-        del mean_mag_data
+        mag_data = self.data_df[['BX', 'BY', 'BZ']]
+        raw_magnitudes = np.sqrt((mag_data**2).sum(axis=1))
+        start_mark = datetime.now()
+        avg_fields = mag_data.rolling(f'{window_size}min', center=True, closed='both').mean()
+        
+        avg_magnitudes = np.sqrt((avg_fields**2).sum(axis=1))
+        mean_diff = mag_data - avg_fields
+        z_hat = avg_fields.divide(avg_magnitudes, axis=0).to_numpy()
+        unit_vector = mag_data.divide(raw_magnitudes, axis=0)
+        
+        cross = pd.DataFrame([np.cross(z_hat[i], unit_vector.iloc[i]) for i in range(0,len(z_hat))])
+        cross_magnitude = np.sqrt((cross**2).sum(axis=1))
+        y_hat = cross.divide(cross_magnitude, axis=0).to_numpy()
+        x_hat = np.cross(y_hat, z_hat)
 
-        # The perturbation components of the mean field are found.
-        # The method used is described in Khurana & Kivelson 1989
-        axes_df = pd.DataFrame({'B_PAR': [], 'B_PERP1': [], 'B_PERP2': []})
-        mean_vecs = self.data_df[['MEAN_BX', 'MEAN_BY', 'MEAN_BZ']]
-        mean_magnitude = np.sqrt((mean_vecs**2).sum(axis=1))
-        raw_data = self.data_df[['BX', 'BY', 'BZ']]
-        raw_magnitude = np.sqrt((raw_data**2).sum(axis=1))
-        for i in range(len(mean_vecs)):
-            z_hat = mean_vecs.iloc[i] / mean_magnitude[i]
-            unit_vec = raw_data.iloc[i] / raw_magnitude[i]
-            cross = np.cross(z_hat, unit_vec)
-            y_hat = cross / (np.sqrt(np.sum(np.power(cross, 2))))
-            x_hat = np.cross(y_hat, z_hat)
-            temp_bx = np.dot((raw_data.iloc[i].to_numpy() - mean_vecs.iloc[i].to_numpy()), x_hat)
-            temp_by = np.dot((raw_data.iloc[i].to_numpy() - mean_vecs.iloc[i].to_numpy()), y_hat)
-            temp_bz = np.dot((raw_data.iloc[i].to_numpy() - mean_vecs.iloc[i].to_numpy()), z_hat)
+        bx = np.array([np.dot(mean_diff.iloc[i], x_hat[i]) for i in range(0,len(x_hat))])
+        by = np.array([np.dot(mean_diff.iloc[i], y_hat[i]) for i in range(0,len(y_hat))])
+        bz = np.array([np.dot(mean_diff.iloc[i], z_hat[i]) for i in range(0,len(z_hat))])
+        
+        mfa_df = pd.DataFrame({'B_PAR': bz, 'B_PERP1': by, 'B_PERP2': bx},
+                            index=mag_data.index)
 
-            new_df_index = pd.DatetimeIndex([self.data_df.index[i].isoformat()])
-            axes_df = axes_df.append(
-                pd.DataFrame({'B_PAR': temp_bz, 'B_PERP1': temp_by, 'B_PERP2': temp_bx},
-                             index=new_df_index)
-            )
-        self.data_df = pd.concat([self.data_df, axes_df], axis=1)
-        self.data_df.index.name = 'DATETIME'
-        self.data_df = self.data_df.dropna()
-        del axes_df
-
+        avg_fields = avg_fields.rename(columns={'BX': 'MEAN_BX', 'BY': 'MEAN_BY', 'BZ': 'MEAN_BZ'})
+        self.data_df = pd.concat([self.data_df, avg_fields, mfa_df], axis=1)
+        
+        
 class CWTData:
     def __init__(self, datetime_series, signal, dt, min_freq=None, max_freq=None,
                  wave_resolution=6, mother=wavelet.Morlet):
@@ -393,6 +692,7 @@ class CWTData:
         self.mother = mother
         self.peaks_found = False
         self._get_cwt_matrix()
+        self.psd = None
 
     def _get_cwt_matrix(self):
 
@@ -477,7 +777,6 @@ class CWTData:
         
         vmin = np.percentile(np.nan_to_num(self.power), 10)
         vmax = np.max(np.nan_to_num(self.power))
-        print(vmin,vmax)
         t = mdates.date2num(self.time_series)
         plot_class = PlotClass(axes)
         plot_class.colormesh(t, self.freqs, self.power, ylabel='Frequency (Hz)', xlabel=xlabel,
@@ -530,8 +829,23 @@ class CWTData:
         
     def psd_plot(self, axes, x_units, ylabel=None,
                  title=None, **kwargs):
-        
-        self.psd_calc()
+        """_summary_
+
+        Parameters
+        ----------
+        axes : _type_
+            _description_
+        x_units : str
+            Unit of time for x_axis. sec, min, hour, day
+        ylabel : _type_, optional
+            _description_, by default None
+        title : _type_, optional
+            _description_, by default None
+        """        
+        if self.psd is None:
+            self.psd_calc()
+        else:
+            pass
         
         plot_class = PlotClass(axes, f'Time({x_units})', ylabel, title)
         plot_class.plot(self.freqs, self.psd, xlabel=f'Time ({x_units})', ylabel='Power',
@@ -539,10 +853,11 @@ class CWTData:
         axes.set_yscale('log')
         
         units_switch = {'sec': 1, 'min': 60, 'hour': 3600, 'day': 86400}
-        axes.set_xticks(np.linspace(self.freqs[0], self.freqs[-1], 10))
-        axes.set_xticklabels(np.round(
-                    1/(np.linspace(self.freqs[0], self.freqs[-1], 10) 
-                       * units_switch[x_units.lower()]), 1))
+        
+        axes.set_xlim(self.freqs[1], self.freqs[-1])
+        x_ticks = axes.get_xticks()
+        axes.set_xticks(x_ticks)
+        axes.set_xticklabels(np.round(1/(np.array(x_ticks) * units_switch[x_units.lower()]),1))
 
     def calc_freq_bandpower(self):
         
