@@ -477,7 +477,7 @@ class MagData:
     """
 
     def __init__(self, start_time, end_time, data_folder='/data/juno_spacecraft/data/fgm_ss',
-                 instrument=['fgm_jno', 'r1s']):
+                 instrument=['fgm_jno', 'r1s'], datafile_type='.csv'):
         """Find and store all data between two datetimes.
 
         Parameters
@@ -491,28 +491,37 @@ class MagData:
         instrument : list of strings, optional
             List of strings that will be in filenames to aid file search.
                 The default is ['fgm_jno', 'r1s'].
-
+        datafile_type : string
+            String of the tye of file the data is saved in
+                Default is '.csv'. '.pkl' can also be used
+        
         Returns
         -------
         None.
         """
         self.start_time = start_time
         self.end_time = end_time
-        self.data_files = _get_files(start_time, end_time, '.csv', data_folder, *instrument)
+        self.data_files = _get_files(start_time, end_time, datafile_type, data_folder, *instrument)
         self.data_df = pd.DataFrame()
         self._get_data()
 
     def _get_data(self):
-        for mag_csv in self.data_files:
-            csv_df = pd.read_csv(mag_csv)
-            csv_df = csv_df.drop(['DECIMAL DAY', 'INSTRUMENT RANGE'], axis=1)
-            csv_df.columns = ['DATETIME', 'BX', 'BY', 'BZ', 'X', 'Y', 'Z']
-            csv_df = csv_df.set_index('DATETIME')
-            csv_df.index = csv_df.index.astype('datetime64[ns]').floor('S')
-            self.data_df = self.data_df.append(csv_df)
-            self.data_df = self.data_df.sort_index()
-            self.data_df = self.data_df[self.start_time: self.end_time].sort_index()
-        del csv_df
+        for mag_file in self.data_files:
+            if mag_file.endswith('.csv'):
+                csv_df = pd.read_csv(mag_file)
+                csv_df = csv_df.drop(['DECIMAL DAY', 'INSTRUMENT RANGE'], axis=1)
+                csv_df.columns = ['DATETIME', 'BX', 'BY', 'BZ', 'X', 'Y', 'Z']
+                csv_df = csv_df.set_index('DATETIME')
+                csv_df.index = csv_df.index.astype('datetime64[ns]').floor('S')
+                self.data_df = self.data_df.append(csv_df)
+                self.data_df = self.data_df.sort_index()
+                self.data_df = self.data_df[self.start_time: self.end_time].sort_index()
+                del csv_df
+            elif mag_file.endswith('.pkl'):
+                with open(mag_file, 'rb') as pikl:
+                    self.data_df = pickle.load(pikl)
+                pikl.close()
+        
 
     def plot(self, axes, start, end, data_labels, plot_magnitude=False, plot_title=None,
              xlabel=None, ylabel=None, time_per_major='12H', time_per_minor='1H',
