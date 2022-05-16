@@ -3,12 +3,13 @@ import re
 import pickle
 import math
 import struct
+import warnings
 from datetime import datetime, timedelta
 from os import fsdecode
 
 import matplotlib
 import matplotlib.dates as mdates
-import matplotlib.gridspec as gs
+import matplotlib.ticker as mticker
 import matplotlib.pyplot as plt
 import numpy as np
 import spiceypy as spice
@@ -33,17 +34,15 @@ class PlotClass:
         self.title = title
 
     def xaxis_datetime_tick_labels(self, x_ticks_labeled,):
-        
-        locator = mdates.AutoDateLocator(minticks=5, maxticks=20)
+        locator = mdates.AutoDateLocator(minticks=5, maxticks=12)
         formatter = mdates.ConciseDateFormatter(locator)
         self.axes.xaxis.set_major_locator(locator)
         self.axes.xaxis.set_major_formatter(formatter)
         if not x_ticks_labeled:
             self.axes.set_xticklabels([])
 
-    def plot(self, x, y, magnitude=False, data_labels=None, xlabel=None, ylabel=None,
-                         title=None, **kwargs):
-
+    def plot(self, x, y, magnitude=False, data_labels=None, xlabel=None,
+             ylabel=None, title=None, **kwargs):
         if (np.ndim(y) == 1) & (np.ndim(x) == 1):
             self.axes.plot(x, y, **kwargs)
         elif (np.ndim(y) != 1) & (np.ndim(x) != 1):
@@ -54,7 +53,7 @@ class PlotClass:
             else:
                 for i in range(len(y)):
                     self.axes.plot(x, y[i], label=data_labels[i], **kwargs)
-        
+
         if magnitude:
             mag = np.array([np.sqrt(np.sum(np.power(i, 2))) for i in np.transpose(y)])
             self.axes.plot(x, mag, label='Magnitude', color='black', **kwargs)
@@ -177,7 +176,7 @@ class WavData():
         """
         self.start_time = start_time
         self.end_time = end_time
-        self.data_files = self._get_files('CSV', data_folder, *instrument)
+        self.data_files = self._get_files('.CSV', data_folder, *instrument)
         self.data_df = pd.DataFrame()
         self.freq = 0.0
         self.t = 0.0
@@ -211,31 +210,30 @@ class WavData():
             pass
         else:
             file_type = '.' + file_type
-            datetime_array = pd.date_range(self.start_time, self.end_time, freq='D').date
-            #print(datetime_array)
-            file_paths = []
-            file_dates = []
-            date_re = re.compile(r'\d{7}')
-            instrument_re = re.compile('|'.join(args))
-            for parent, child, files in os.walk(data_folder):
-                for file_name in files:
-                    if file_name.endswith(file_type):
-                        
-                        file_path = os.path.join(parent, file_name)
-                        file_date = datetime.strptime(
-                            date_re.search(file_name).group(), '%Y%j')
-                        instrument_match = instrument_re.findall(file_name)
-                  
-                        if file_date.date() in datetime_array and sorted(args) == sorted(instrument_match):
+        datetime_array = pd.date_range(self.start_time, self.end_time, freq='D').date
+        #print(datetime_array)
+        file_paths = []
+        file_dates = []
+        date_re = re.compile(r'\d{7}')
+        instrument_re = re.compile('|'.join(args))
+        for parent, child, files in os.walk(data_folder):
+            for file_name in files:
+                if file_name.endswith(file_type):
+                    
+                    file_path = os.path.join(parent, file_name)
+                    file_date = datetime.strptime(
+                        date_re.search(file_name).group(), '%Y%j')
+                    instrument_match = instrument_re.findall(file_name)
+                
+                    if file_date.date() in datetime_array and sorted(args) == sorted(instrument_match):
 
-                            file_paths = np.append(file_paths, file_path)
-                            file_dates = np.append(file_dates, file_date)
-                            
-                            sorting_array = sorted(zip(file_dates, file_paths))
-                            file_dates, file_paths = zip(*sorting_array)
-            del(datetime_array, file_dates)
+                        file_paths = np.append(file_paths, file_path)
+                        file_dates = np.append(file_dates, file_date)
                         
-            return file_paths
+                        sorting_array = sorted(zip(file_dates, file_paths))
+                        file_dates, file_paths = zip(*sorting_array)
+        del(datetime_array, file_dates)
+        return file_paths
         
         
     def _get_data(self):
@@ -515,14 +513,29 @@ class MagData:
                 csv_df.index = csv_df.index.astype('datetime64[ns]').floor('S')
                 self.data_df = self.data_df.append(csv_df)
                 self.data_df = self.data_df.sort_index()
-                self.data_df = self.data_df[self.start_time: self.end_time].sort_index()
+                
                 del csv_df
             elif mag_file.endswith('.pkl'):
                 with open(mag_file, 'rb') as pikl:
-                    self.data_df = pickle.load(pikl)
+                    data = pickle.load(pikl)
+                    data = data.sort_index()
+                    self.data_df = pd.concat([self.data_df, data], axis=0) 
                 pikl.close()
+            self.data_df = self.data_df[self.start_time: self.end_time].sort_index()
+            
+    def check_gaps(self):
+        # Checks for gaps in data
+        datetime_series = self.data_df.index
+        mask = datetime_series.to_series().diff() > pd.Timedelta('00:00:05')
+        if any(mask == True):
+            pos = datetime_series[mask]
+            for stamp in pos:
+                indx = datetime_series.get_loc(stamp)
+                gap_start = datetime_series[indx-1]
+                gap_end = datetime_series[indx+1]
+                gap_size = datetime_series[indx+1] - datetime_series[indx-1]
+                print(f'Gap from {gap_start} to {gap_end} of size {gap_size}.')
         
-
     def plot(self, axes, start, end, data_labels, plot_magnitude=False, plot_title=None,
              xlabel=None, ylabel=None, time_per_major='12H', time_per_minor='1H',
              tick_label_format='%m-%d %H', x_ticks_labeled=True, **kwargs):
@@ -600,7 +613,8 @@ class MagData:
         self.data_df = self.data_df.resample(f'{downsampled_rate}s',
                                              origin='start',
                                              closed='left').mean().shift(round(downsampled_rate/2), freq='s')
-
+        if any(np.invert(np.isnan(self.data_df))):
+            self.data_df = self.data_df.fillna(0)
 
     def cart_to_sphere(self):
         x = self.data_df.X
@@ -676,7 +690,7 @@ class CWTData:
         ----------
         datetime_series : array of datetime64[ns] data
             Array of datetime variables accompanying the signal data
-        signal : array
+        signal : numpy array
             Signal to be analyzed
         dt : int
             Time in seconds between data samples in the signal
@@ -693,7 +707,7 @@ class CWTData:
 
         """        
         self.time_series = datetime_series
-        self.data = signal
+        self._check_signal(signal)
         self.wave_resolution = wave_resolution
         self.dt = dt
         self.min_freq = min_freq
@@ -702,6 +716,15 @@ class CWTData:
         self.peaks_found = False
         self._get_cwt_matrix()
         self.psd = None
+
+    def _check_signal(self, signal):
+        mask = np.invert(np.isfinite(signal))
+        if any(mask) is True:
+            warnings.warn('Signal contains non finite numbers,'\
+                ' this will affect the CWT calculation')
+        if (type(signal) is pd.Series) or (type(signal) is pd.DataFrame):
+            signal = signal.to_numpy()
+        self.data = signal
 
     def _get_cwt_matrix(self):
 
@@ -785,17 +808,20 @@ class CWTData:
             self.remove_coi()
         
         vmin = np.percentile(np.nan_to_num(self.power), 10)
+        if vmin == 0:
+            vmin = 1e-4
         vmax = np.max(np.nan_to_num(self.power))
+        if vmax == 0:
+            vmax = 1
         t = mdates.date2num(self.time_series)
         plot_class = PlotClass(axes)
         plot_class.colormesh(t, self.freqs, self.power, ylabel='Frequency (Hz)', xlabel=xlabel,
-                             title=title, color_bar=colorbar, norm=LogNorm(),
+                             title=title, color_bar=colorbar, norm=LogNorm(vmin,vmax),
                              cmap='jet', **kwargs)
         if mark_coi:
             plot_class.plot(self.time_series, self.coi, linestyle='--', color='black')
         axes.set_yscale('log')
         plot_class.xaxis_datetime_tick_labels(x_ticks_labeled)
-        
 
     def peaks_plot(self, axes, plot_title=False, xlabel=True,
                    time_per_major='12H', time_per_minor='1H',
@@ -814,27 +840,6 @@ class CWTData:
                             cmap='jet', **kwargs)
         axes.set_yscale('log')
         plot_class.xaxis_datetime_tick_labels(x_ticks_labeled)
-
-    def peaks_hist(self, axes, min_frequency=1/(20*60*60), max_frequency=1/(60*60),
-                   freq_per_bin=1, x_units='min'):
-
-        if not self.peaks_found:
-            self._peak_finding(min_frequency, max_frequency)
-
-        units_switch = {'sec': 1,
-                        'min': 60,
-                        'hour': 3600,
-                        'day': 86400}
-        bin_num = round(len(self.peak_freq_range) / freq_per_bin)
-        axes.hist(self.freq_peaks_hist, bins=bin_num)
-        axes.tick_params(axis='x', labelsize='small')
-        axes.set_xticks(np.linspace(min_frequency, max_frequency, 10))
-        axes.set_xticklabels(np.round(
-            1/(np.linspace(min_frequency, max_frequency, 10) * units_switch[x_units]), 1
-            ))
-        axes.set_xlabel(f'Time ({x_units})')
-        axes.set_ylabel('Weighted Peaks')
-        axes.set_yscale('log')
         
     def psd_plot(self, axes, x_units, ylabel=None,
                  title=None, **kwargs):
@@ -864,9 +869,39 @@ class CWTData:
         units_switch = {'sec': 1, 'min': 60, 'hour': 3600, 'day': 86400}
         
         axes.set_xlim(self.freqs[1], self.freqs[-1])
-        x_ticks = axes.get_xticks()
-        axes.set_xticks(x_ticks)
-        axes.set_xticklabels(np.round(1/(np.array(x_ticks) * units_switch[x_units.lower()]),1))
+        axes.xaxis.set_visible(False)
+        
+        def freq2per(x):
+            with np.errstate(divide='ignore'):
+                return 1/(np.array(x) * units_switch[x_units.lower()])
+        def per2freq(x):
+            with np.errstate(divide='ignore'):
+                return units_switch[x_units.lower()]/np.array(x)
+        
+        axes_per = axes.secondary_xaxis('bottom', functions=(freq2per, per2freq))
+        axes_per.set_xlabel(f'Period ({x_units})')
+        axes_per.set_xticks(np.array([10, 7, 5, 3, 2, 1]))
+
+    def peaks_hist(self, axes, min_frequency=1/(20*60*60), max_frequency=1/(60*60),
+                   freq_per_bin=1, x_units='min'):
+        
+        if not self.peaks_found:
+            self._peak_finding()
+
+        units_switch = {'sec': 1,
+                        'min': 60,
+                        'hour': 3600,
+                        'day': 86400}
+        bin_num = round(len(self.freqs) / freq_per_bin)
+        axes.hist(self.freq_peaks_hist, bins=bin_num)
+        axes.tick_params(axis='x', labelsize='small')
+        axes.set_xticks(np.linspace(min_frequency, max_frequency, 10))
+        axes.set_xticklabels(np.round(
+            1/(np.linspace(min_frequency, max_frequency, 10) * units_switch[x_units]), 1
+            ))
+        axes.set_xlabel(f'Time ({x_units})')
+        axes.set_ylabel('Weighted Peaks')
+        axes.set_yscale('log')
 
     def calc_freq_bandpower(self):
         
@@ -1236,7 +1271,7 @@ class JadClass:
         jadeIonData = jadeIon.ion_df  
         
         self.jad_mean = []
-        self.jad_tm = jadeIon.ion_df.index
+        self.t = jadeIon.ion_df.index
         self.jad_arr = jadeIon.ion_df.to_numpy()
         #plt.imshow(np.transpose(jad_arr),origin='lower',aspect='auto',cmap='jet')
         #plt.show()

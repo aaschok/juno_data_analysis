@@ -1,3 +1,4 @@
+from cgi import print_directory
 import os
 import re
 from datetime import datetime, timedelta
@@ -135,7 +136,9 @@ def _get_files(start_time, end_time, file_type, data_folder, *args):
     else:
         file_type = '.' + file_type
 
-    datetime_array = pd.date_range(start_time, end_time, freq='D').date
+    start_datetime = datetime.fromisoformat(start_time)
+    end_datetime = datetime.fromisoformat(end_time) + timedelta(days=1)
+    datetime_array = pd.date_range(start_datetime, end_datetime, freq='D').date
     file_paths = []
     file_dates = []
     date_re = re.compile(r'\d{7}')
@@ -161,20 +164,27 @@ def find_orb_num(date_time):
     if type(date_time) is str:
         date_time = datetime.fromisoformat(date_time)
         
-    orbs = pd.read_fwf('/data/juno_spacecraft/data/orbits/juno_rec_orbit_v08.orb')
+    orbs = pd.read_fwf('/data/juno_spacecraft/data/orbits/juno_rec_orbit_v09.orb')
     orbs = orbs.drop(index=[0])
     for index in orbs.index[:-1]:
         orb_start = datetime.strptime(orbs['Event UTC APO'][index], '%Y %b %d %H:%M:%S')
         orb_end = datetime.strptime(orbs['Event UTC APO'][index + 1], '%Y %b %d %H:%M:%S')
         if (date_time > orb_start) & (date_time < orb_end):
-            return orbs['No.'][index]
+            return int(orbs['No.'][index])
         
 def get_orbit_data():
-    orbs = pd.read_fwf('/data/juno_spacecraft/data/orbits/juno_rec_orbit_v08.orb')
+    orbs = pd.read_fwf('/data/juno_spacecraft/data/orbits/juno_rec_orbit_v09.orb')
     orbs = orbs.drop(index=[0])
-    orbs = orbs[['No.', 'Event UTC APO']]
-    orbs = orbs.rename(columns={'No.':'Orb', 'Event UTC APO': 'Start'})
+    orbs = orbs[['No.', 'Event UTC APO', 'OP-Event UTC PERI']]
+    orbs = orbs.rename(columns={'No.':'Orb', 'Event UTC APO': 'Start',
+                                'OP-Event UTC PERI': 'Perijove'})
     orbs = orbs.set_index('Orb')
+    orbs.index = orbs.index.astype('float64')
     orbs.Start = np.array([datetime.strptime(orbs['Start'][i], '%Y %b %d %H:%M:%S') for i in orbs.index])
+    orbs.Perijove = np.array([datetime.strptime(orbs['Perijove'][i], '%Y %b %d %H:%M:%S') for i in orbs.index])
     return orbs
     
+    
+if __name__ == '__main__':
+    time = '2017-03-05T08:00:00'
+    find_orb_num(datetime.fromisoformat(time))
