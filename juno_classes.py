@@ -973,7 +973,10 @@ class CWTData:
         vmax = np.max(np.nan_to_num(self.power))
         if vmax == 0:
             vmax = 1
-        t = mdates.date2num(self.time_series)
+        if np.issubdtype(self.time_series.dtype, np.datetime64):
+            t = mdates.date2num(self.time_series)
+        else:
+            t = self.time_series
         plot_class = PlotClass(axes)
         plot_class.colormesh(
             t,
@@ -991,7 +994,8 @@ class CWTData:
             plot_class.plot(self.time_series, self.coi,
                             linestyle="--", color="black")
         axes.set_yscale("log")
-        plot_class.xaxis_datetime_tick_labels(x_ticks_labeled)
+        if np.issubdtype(self.time_series.dtype, np.datetime64):
+            plot_class.xaxis_datetime_tick_labels(x_ticks_labeled)
 
     def peaks_plot(
         self,
