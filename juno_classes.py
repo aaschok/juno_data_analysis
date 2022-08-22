@@ -91,7 +91,7 @@ class PlotClass:
             divider = make_axes_locatable(self.axes)
             cax = divider.append_axes("right", "2%", pad="2%")
             cbr = plt.colorbar(cwt, cax=cax)
-            cbr.set_label("Magnitude", rotation=270, labelpad=5, size=8)
+            cbr.set_label(r"$[nT^{2}/Hz]$", rotation=270, labelpad=25, y=0.4)
 
 
 class PosData:
@@ -99,13 +99,33 @@ class PosData:
 
     Attributes
     ----------
-    datetime_series : string
-        Array of datetime objects
+    datetime_data : dataframe, datetime array
+        Array of numpy datetime64 objects or pandas DataFrame with a DatetimeIndex
 
     """
 
-    def __init__(self, datetime_series):
-        self.datetime_series = datetime_series
+    def __init__(self, datetime_data):
+        self.datetime_data = datetime_data
+        self._check_input(datetime_data)
+        
+    def _check_input(self, datetime_data):
+        if type(datetime_data) is pd.DataFrame:
+            is_datetimeindex = type(datetime_data.index) is pd.DatetimeIndex
+            is_datetime_obj = np.issubdtype(datetime_data.index, np.datetime64)
+            if is_datetimeindex and is_datetime_obj:
+                self.datetime_series = datetime_data.index
+                self.is_dataframe = True
+        else:
+            if np.issubdtype(datetime_data, np.datetime64):
+                self.datetime_series = datetime_data
+                self.is_dataframe = False
+
+    def _returned_data(self, pos_data):
+        if self.is_dataframe:
+            new_df = pd.concat([self.datetime_data, pos_data], axis=1)
+            return new_df
+        elif not self.is_dataframe:
+            return pos_data
 
     def JSS_position(self):
         for year in ["2016", "2017", "2018", "2019", "2020"]:
@@ -117,12 +137,14 @@ class PosData:
         ]
         positions, lt = spice.spkpos(
             "JUNO", et_array, "JUNO_JSS", "NONE", "JUPITER")
+        # rad, lat, lon = spice.recsph(positions)
         positions = positions.transpose()
         spice.kclear()
-        self.cart_pos_df = pd.DataFrame(
+        cart_pos_df = pd.DataFrame(
             {"X": positions[0], "Y": positions[1], "Z": positions[2]},
             index=self.datetime_series,
         )
+        return self._returned_data(cart_pos_df)
 
     def sys_3(self):
         for year in ["2016", "2017", "2018", "2019", "2020"]:
@@ -157,7 +179,7 @@ class PosData:
         e = 249 * deg2rad
         CentEq2 = (a * np.tanh(b * R - c) + d) * np.sin(lon * deg2rad - e)
         z_equator = positions.T[2] / 7.14e4 - R * np.sin(CentEq2)
-        self.sys_3_df = pd.DataFrame(
+        sys_3_df = pd.DataFrame(
             {
                 "radial_3": rad / 7.14e4,
                 "lon_3": lon,
@@ -166,7 +188,21 @@ class PosData:
             },
             index=self.datetime_series,
         )
+        return self._returned_data(sys_3_df)
 
+    def in_sheath(self):
+            sheath_df = pd.DataFrame({'in_sheath': np.zeros(len(self.datetime_series))},
+                                     index=self.datetime_series)
+            sheath_file = r'/data/juno_spacecraft/data/crossings/crossingmasterlist/jno_crossings_master_v6.txt'
+            sheath_crossings_df = get_sheath_intervals(sheath_file)
+            for index, row in sheath_crossings_df.iterrows():
+                start_in_series = self.datetime_series[0] < row.START < self.datetime_series[-1]
+                end_in_series = self.datetime_series[0] < row.END < self.datetime_series[-1]
+                series_in_sheath = (row.START < self.datetime_series[0] < row.END) &\
+                                   (row.START < self.datetime_series[-1] < row.END)
+                if start_in_series or end_in_series or series_in_sheath:
+                    sheath_df.loc[row.START: row.END, 'in_sheath'] = 1
+            return self._returned_data(sheath_df)
 
 class WavData:
     """Collects and stores all mag data between two datetimes.
@@ -249,7 +285,7 @@ class WavData:
             file_type = "." + file_type
         datetime_array = pd.date_range(
             self.start_time, self.end_time, freq="D").date
-        # print(datetime_array)
+
         file_paths = []
         file_dates = []
         date_re = re.compile(r"\d{7}")
@@ -1676,7 +1712,7 @@ class JadClass:
         self.get_bc_mask()
 
     def read_data(self):
-        dataFolder = pathlib.Path("/data/juno_spacecraft/data/jad")
+        dataFolder = r"/data/juno_spacecraft/data/jad"
         datFiles = _get_files(
             self.timeStart, self.timeEnd, ".DAT", dataFolder, "JAD_L30_LRS_ION_ANY_CNT"
         )
@@ -1776,34 +1812,7 @@ class JadClass:
 
 
 if __name__ == "__main__":
-    start = "2016-07-31T00:00:00"
-    end = "2020-11-06T12:00:00"
-
-    lat_df = time_in_lat_window(start, end, 30)
-    for index, row in lat_df.iterrows():
-        start_datetime = row["START"]
-        end_datetime = row["END"]
-        file = f"q_data_{start_datetime.date()}-{end_datetime.date()}.pickle"
-
-        turb = Turbulence(
-            start_datetime.isoformat(), end_datetime.isoformat(), 1, 30, 30
-        )
-        file_path = f"/home/aschok/Documents/data/heating_data_+-30/{file}"
-        with open(file_path, "wb") as pickle_file:
-            pickle.dump(turb.q_data, pickle_file)
-            print(f"Saved data from {start_datetime} to {end_datetime}")
-            pickle_file.close()
-
-        file = f"q_slopes_{start_datetime.date()}-{end_datetime.date()}.pickle"
-        file_path = f"/home/aschok/Documents/data/heating_data_+-30/{file}"
-        with open(file_path, "wb") as pickle_file:
-            pickle.dump(
-                {
-                    "q_kaw_slopes": turb.q_kaw_slopes,
-                    "q_mhd_slopes": turb.q_mhd_slopes,
-                    "time": turb.q_data.index,
-                },
-                pickle_file,
-            )
-            print(f"Saved data from {start_datetime} to {end_datetime}")
-            pickle_file.close()
+    time_series = pd.date_range('2016-09-27T23:20:00','2017-10-04T12:00:00', freq='5min')
+    pos = PosData(time_series)
+    sheath_series = pos.in_sheath()
+    print(sheath_series.head(10))

@@ -186,5 +186,6 @@ def get_orbit_data():
     
     
 if __name__ == '__main__':
-    time = '2017-03-05T08:00:00'
-    find_orb_num(datetime.fromisoformat(time))
+    sheath_file = r'/data/juno_spacecraft/data/crossings/crossingmasterlist/jno_crossings_master_v6.txt'
+    sheath_df = get_sheath_intervals(sheath_file)
+    print(sheath_df[10:20])
